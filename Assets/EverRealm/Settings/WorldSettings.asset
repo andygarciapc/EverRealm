@@ -1,0 +1,38 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 231fe205087365044b469b6d7808550a, type: 3}
+  m_Name: WorldSettings
+  m_EditorClassIdentifier: EverRealm::EverRealm.World.WorldSettings
+  seed: 12345
+  islandSize: 256
+  blockSize: 0.7
+  chunkSize: 32
+  maxHeight: 48
+  seaLevel: 10
+  seaFloor: 2
+  heightExponent: 1.8
+  noiseScale: 110
+  octaves: 5
+  persistence: 0.5
+  lacunarity: 2
+  falloffStart: 0.55
+  coastWarp: 0.25
+  beachHeight: 1.5
+  dirtDepth: 3
+  rockLine: 0.7
+  blockColors:
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0.36, g: 0.62, b: 0.24, a: 1}
+  - {r: 0.52, g: 0.36, b: 0.22, a: 1}
+  - {r: 0.5, g: 0.5, b: 0.52, a: 1}
+  - {r: 0.86, g: 0.79, b: 0.55, a: 1}
+  colorJitter: 0.08
