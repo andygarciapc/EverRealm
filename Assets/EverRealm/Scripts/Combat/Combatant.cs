@@ -8,25 +8,18 @@ namespace EverRealm.Combat
     public enum CombatState { Idle, Blocking, Windup, Active, Recovery, Dodging, Staggered, Dead }
 
     /// <summary>
-    /// Combat state machine shared by the player and enemies: a single telegraphed swing, hold-to-block
-    /// with parry timing, weight-class dodges, health and stamina. Controllers issue commands
-    /// (<see cref="TryAttack"/>, <see cref="SetBlocking"/>, <see cref="TryDodge"/>); timing runs on the
-    /// character's <see cref="LocalTime"/> so hit-stop only freezes the characters involved.
+    /// Combat actions and health for any agent: a single telegraphed swing (feintable during wind-up),
+    /// hold-to-block with parry timing, weight-class dodges, and permanent death. Brains issue commands
+    /// (<see cref="TryAttack"/>, <see cref="SetBlocking"/>, <see cref="TryDodge"/>). Actions spend from the
+    /// body's <see cref="Stamina"/> and restrict locomotion via <see cref="CharacterMotor.Restriction"/>.
+    /// Timing runs on the character's <see cref="LocalTime"/> so hit-stop only freezes those involved.
     /// </summary>
-    [RequireComponent(typeof(CharacterMotor), typeof(LocalTime))]
+    [RequireComponent(typeof(CharacterMotor), typeof(LocalTime), typeof(Stamina))]
+    [RequireComponent(typeof(Agent))]
     public sealed class Combatant : MonoBehaviour
     {
         [SerializeField] WeaponData weapon;
-        [Tooltip("Combatants on the same team can't hit each other.")]
-        public int team;
-
-        [Header("Health and stamina")]
         public float maxHealth = 100f;
-        public float maxStamina = 100f;
-        [Tooltip("Stamina regained per second once regeneration starts.")]
-        public float staminaRegen = 35f;
-        [Tooltip("Seconds after spending stamina before it regenerates.")]
-        public float staminaRegenDelay = 0.8f;
 
         [Header("Blocking")]
         [Tooltip("Width of the protected arc in front of the character, in degrees.")]
@@ -67,13 +60,15 @@ namespace EverRealm.Combat
         static readonly Collider[] OverlapBuffer = new Collider[32];
         readonly HashSet<Combatant> hitThisSwing = new HashSet<Combatant>();
 
-        float clock, stateDuration, lastStaminaUse = float.NegativeInfinity;
+        float clock, stateDuration;
         bool blockHeld;
         float blockPressedClock = float.NegativeInfinity;
         Vector3 aimDirection, blockFacing;
 
         public CharacterMotor Motor { get; private set; }
         public LocalTime LocalTime { get; private set; }
+        public Stamina Stamina { get; private set; }
+        public Agent Agent { get; private set; }
         public WeaponData Weapon => weapon;
         public CombatState State { get; private set; }
         /// <summary>Local seconds spent in the current state.</summary>
@@ -81,12 +76,17 @@ namespace EverRealm.Combat
         /// <summary>0..1 through the current timed state (wind-up, swing, recovery, stagger, dodge).</summary>
         public float StateProgress => stateDuration > 0f ? Mathf.Clamp01(StateTime / stateDuration) : 0f;
         public float Health { get; private set; }
-        public float Stamina { get; private set; }
         public DodgeProfile CurrentDodge => dodges[Mathf.Clamp((int)weightClass, 0, dodges.Length - 1)];
         public Vector3 DodgeDirection { get; private set; }
+        /// <summary>The facing the body turns to during the current dodge (see <see cref="FacingDuringDodge"/>).</summary>
+        public Vector3 DodgeFacing { get; private set; }
         public bool IsInvulnerable => State == CombatState.Dodging && CurrentDodge.IsInvulnerableAt(StateTime);
         public bool CanAct => State == CombatState.Idle || State == CombatState.Blocking;
+        /// <summary>The swing isn't committed until it begins, so the whole wind-up can be feinted into a dodge.</summary>
+        public bool IsFeintable => State == CombatState.Windup;
         public bool IsDead => State == CombatState.Dead;
+        /// <summary>Stamina a block of this weapon's hit would cost.</summary>
+        public float BlockCostAgainst(WeaponData attackerWeapon) => attackerWeapon.damage * blockStaminaPerDamage;
 
         /// <summary>Raised on the defender after any hit is resolved: (result, attacker).</summary>
         public event Action<HitResult, Combatant> HitReceived;
@@ -98,24 +98,24 @@ namespace EverRealm.Combat
         {
             Motor = GetComponent<CharacterMotor>();
             LocalTime = GetComponent<LocalTime>();
+            Stamina = GetComponent<Stamina>();
+            Agent = GetComponent<Agent>();
             Health = maxHealth;
-            Stamina = maxStamina;
         }
 
         // ---- Commands ----
 
         public bool TryAttack(Vector3 aim)
         {
-            if (!CanAct || weapon == null || Stamina <= 0f) return false;
+            if (!CanAct || weapon == null || Stamina.IsEmpty) return false;
             aim.y = 0f;
             aimDirection = aim.sqrMagnitude > 0.0001f ? aim.normalized : transform.forward;
-            SpendStamina(weapon.staminaCost);
             hitThisSwing.Clear();
             Enter(CombatState.Windup, weapon.windup);
             return true;
         }
 
-        /// <summary>Call every frame with the block button state and the direction the guard should face.</summary>
+        /// <summary>Call every frame with the block intent and the direction the guard should face.</summary>
         public void SetBlocking(bool held, Vector3 facing)
         {
             if (held && !blockHeld) blockPressedClock = clock;
@@ -126,19 +126,14 @@ namespace EverRealm.Combat
 
         public bool TryDodge(Vector3 direction)
         {
-            if (!CanAct || Stamina <= 0f) return false;
+            if (!(CanAct || IsFeintable) || Stamina.IsEmpty) return false;
+            if (IsFeintable) Stamina.Spend(weapon.feintStaminaCost);
             direction.y = 0f;
             DodgeDirection = direction.sqrMagnitude > 0.0001f ? direction.normalized : -transform.forward;
-            SpendStamina(CurrentDodge.staminaCost);
+            DodgeFacing = FacingDuringDodge(CurrentDodge.style, DodgeDirection, transform.forward);
+            Stamina.Spend(CurrentDodge.staminaCost);
             Enter(CombatState.Dodging, CurrentDodge.TotalTime);
             return true;
-        }
-
-        public void Revive()
-        {
-            Health = maxHealth;
-            Stamina = maxStamina;
-            Enter(CombatState.Idle);
         }
 
         // ---- Update ----
@@ -157,11 +152,16 @@ namespace EverRealm.Combat
                     break;
                 case CombatState.Blocking:
                     Motor.FaceTowards(blockFacing, blockTurnSpeed);
+                    Stamina.DelayRegen(); // No recovery with the guard up.
                     if (!blockHeld) Enter(CombatState.Idle);
                     break;
                 case CombatState.Windup:
                     Motor.FaceTowards(aimDirection, weapon.attackTurnSpeed);
-                    if (StateTime >= stateDuration) Enter(CombatState.Active, weapon.active);
+                    if (StateTime >= stateDuration)
+                    {
+                        Stamina.Spend(weapon.staminaCost); // The swing is now committed.
+                        Enter(CombatState.Active, weapon.active);
+                    }
                     break;
                 case CombatState.Active:
                     Motor.FaceTowards(aimDirection, weapon.attackTurnSpeed);
@@ -184,9 +184,7 @@ namespace EverRealm.Combat
                     break;
             }
 
-            ApplyMovementRules();
-            if (State != CombatState.Blocking && clock - lastStaminaUse >= staminaRegenDelay)
-                Stamina = Mathf.Min(maxStamina, Stamina + staminaRegen * dt);
+            Motor.Restriction = CurrentRestriction();
         }
 
         void UpdateDodge()
@@ -194,25 +192,39 @@ namespace EverRealm.Combat
             DodgeProfile dodge = CurrentDodge;
             bool moving = StateTime < dodge.duration;
             Motor.ScriptedVelocity = moving ? DodgeDirection * (dodge.distance / dodge.duration) : Vector3.zero;
-            if (dodge.style == DodgeStyle.Roll) Motor.FaceTowards(DodgeDirection, rollTurnSpeed);
-            else HoldFacing(); // Steps keep the guard facing the enemy.
+            if (dodge.style == DodgeStyle.Hopstep) HoldFacing(); // Hopsteps keep the guard facing the enemy.
+            else Motor.FaceTowards(DodgeFacing, rollTurnSpeed);
             if (StateTime >= stateDuration) Enter(CombatState.Idle);
+        }
+
+        /// <summary>
+        /// Which way the body faces during a dodge: a roll turns into its direction, a power step turns side-on
+        /// to it (whichever side is the smaller turn), a hopstep keeps facing <paramref name="forward"/>.
+        /// </summary>
+        public static Vector3 FacingDuringDodge(DodgeStyle style, Vector3 direction, Vector3 forward)
+        {
+            switch (style)
+            {
+                case DodgeStyle.Roll:
+                    return direction;
+                case DodgeStyle.PowerStep:
+                    Vector3 side = Vector3.Cross(Vector3.up, direction); // Facing this, the step goes to the left.
+                    return Vector3.Dot(side, forward) >= 0f ? side : -side;
+                default:
+                    return forward;
+            }
         }
 
         void HoldFacing() => Motor.FaceTowards(transform.forward, 0f);
 
-        void ApplyMovementRules()
+        /// <summary>How the current action limits locomotion. Free movement when not acting.</summary>
+        MovementRestriction CurrentRestriction() => State switch
         {
-            if (State != CombatState.Dodging) Motor.ScriptedVelocity = null;
-            Motor.JumpAllowed = CanAct;
-            Motor.SpeedMultiplier = State switch
-            {
-                CombatState.Idle => 1f,
-                CombatState.Blocking => blockMoveMultiplier,
-                CombatState.Windup or CombatState.Active or CombatState.Recovery => attackMoveMultiplier,
-                _ => 0f,
-            };
-        }
+            CombatState.Idle => MovementRestriction.None,
+            CombatState.Blocking => new MovementRestriction { SpeedMultiplier = blockMoveMultiplier },
+            CombatState.Windup or CombatState.Active or CombatState.Recovery => new MovementRestriction { SpeedMultiplier = attackMoveMultiplier },
+            _ => new MovementRestriction { SpeedMultiplier = 0f },
+        };
 
         void Enter(CombatState state, float duration = 0f)
         {
@@ -220,12 +232,6 @@ namespace EverRealm.Combat
             StateTime = 0f;
             stateDuration = duration;
             if (state != CombatState.Dodging) Motor.ScriptedVelocity = null;
-        }
-
-        void SpendStamina(float amount)
-        {
-            Stamina = Mathf.Max(0f, Stamina - amount);
-            lastStaminaUse = clock;
         }
 
         // ---- Hits ----
@@ -237,7 +243,8 @@ namespace EverRealm.Combat
             for (int i = 0; i < count; i++)
             {
                 var target = OverlapBuffer[i].GetComponentInParent<Combatant>();
-                if (target == null || target == this || target.team == team || target.IsDead || hitThisSwing.Contains(target)) continue;
+                if (target == null || target == this || target.IsDead || hitThisSwing.Contains(target)) continue;
+                if (!Agent.IsHostileTo(target.Agent)) continue;
                 if (!CombatRules.SwingReaches(transform.position, transform.forward, target.transform.position,
                                               target.Motor.Radius, weapon.reach, weapon.arc, maxHitHeightDifference)) continue;
                 hitThisSwing.Add(target);
@@ -255,10 +262,10 @@ namespace EverRealm.Combat
                 IsInvulnerable = IsInvulnerable,
                 IsBlocking = State == CombatState.Blocking,
                 BlockHeldTime = clock - blockPressedClock,
-                Stamina = Stamina,
+                Stamina = Stamina.Current,
                 Forward = transform.forward,
             };
-            float blockCost = attackWeapon.damage * blockStaminaPerDamage;
+            float blockCost = BlockCostAgainst(attackWeapon);
             HitResult result = CombatRules.Resolve(defender, attacker.transform.position - transform.position, blockCost, blockArc, parryWindow);
 
             Vector3 away = transform.position - attacker.transform.position;
@@ -273,11 +280,11 @@ namespace EverRealm.Combat
                     hitStop *= parryHitStopMultiplier;
                     break;
                 case HitResult.Blocked:
-                    SpendStamina(blockCost);
+                    Stamina.Spend(blockCost);
                     Motor.AddImpulse(knockback * blockKnockbackMultiplier);
                     break;
                 case HitResult.GuardBroken:
-                    SpendStamina(Stamina);
+                    Stamina.Spend(Stamina.Current);
                     Motor.AddImpulse(knockback);
                     Stagger(guardBreakStagger);
                     break;
@@ -307,9 +314,13 @@ namespace EverRealm.Combat
             Enter(CombatState.Staggered, duration);
         }
 
+        /// <summary>Death is permanent. The body stays where it fell and stops blocking other agents.</summary>
         void Die()
         {
             Enter(CombatState.Dead);
+            blockHeld = false;
+            Motor.MoveIntent = Vector3.zero;
+            Motor.SetCollidesWithAgents(false);
             Died?.Invoke();
         }
     }

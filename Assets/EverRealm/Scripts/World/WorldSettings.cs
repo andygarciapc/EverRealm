@@ -47,6 +47,18 @@ namespace EverRealm.World
         [Tooltip("Normalised height (0-1 of maxHeight) above which bare stone is exposed.")]
         [Range(0f, 1f)] public float rockLine = 0.7f;
 
+        [Header("Hamlet")]
+        [Tooltip("Radius of the flattened ground the hamlet is built on, in metres.")]
+        public float hamletRadius = 14f;
+        [Tooltip("Width of the slope blending the flattened ground back into the terrain, in metres.")]
+        public float hamletBlend = 6f;
+        [Tooltip("Largest height difference across a site that may be flattened, in metres.")]
+        public float hamletMaxRelief = 8f;
+        public int minHuts = 3;
+        public int maxHuts = 5;
+        [Tooltip("Outer width of a hut, in blocks.")]
+        [Min(4)] public int hutBlocks = 7;
+
         [Header("Palette (indexed by BlockType)")]
         public Color[] blockColors =
         {
@@ -55,6 +67,9 @@ namespace EverRealm.World
             new Color(0.52f, 0.36f, 0.22f),     // Dirt
             new Color(0.50f, 0.50f, 0.52f),     // Stone
             new Color(0.86f, 0.79f, 0.55f),     // Sand
+            new Color(0.40f, 0.27f, 0.16f),     // Wood
+            new Color(0.66f, 0.50f, 0.32f),     // Planks
+            new Color(0.78f, 0.66f, 0.36f),     // Thatch
         };
         [Tooltip("Per-block brightness variation, 0 = flat colours.")]
         [Range(0f, 0.3f)] public float colorJitter = 0.08f;

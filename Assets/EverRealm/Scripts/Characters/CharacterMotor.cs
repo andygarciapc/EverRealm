@@ -2,15 +2,34 @@ using UnityEngine;
 
 namespace EverRealm.Characters
 {
+    public enum Gait { Walk, Run, Sprint }
+
+    /// <summary>Limits an action places on locomotion (e.g. slow while blocking). Locomotion stays in charge otherwise.</summary>
+    public struct MovementRestriction
+    {
+        public float SpeedMultiplier;
+        public bool AllowSprint;
+        public bool AllowJump;
+
+        public static MovementRestriction None => new MovementRestriction { SpeedMultiplier = 1f, AllowSprint = true, AllowJump = true };
+    }
+
     /// <summary>
-    /// CharacterController movement shared by the player and AI: smoothed horizontal velocity,
-    /// gravity, buffered jumps, limited-rate turning, knockback impulses and scripted motion
-    /// (dodges). Controllers write the desired state each frame; this runs after them.
+    /// CharacterController locomotion shared by every agent: gaits (walk/run/sprint, with sprint costing
+    /// stamina), gravity, buffered jumps, limited-rate turning, knockback impulses and scripted motion
+    /// (dodges). Brains write the intent each frame; actions may restrict it. Runs after both.
     /// </summary>
     [DefaultExecutionOrder(100)]
     [RequireComponent(typeof(CharacterController), typeof(LocalTime))]
     public sealed class CharacterMotor : MonoBehaviour
     {
+        [Header("Gaits (m/s)")]
+        public float walkSpeed = 2.5f;
+        public float runSpeed = 6f;
+        public float sprintSpeed = 10f;
+        [Tooltip("Stamina drained per second while sprinting.")]
+        public float sprintStaminaPerSecond = 15f;
+
         [Header("Movement")]
         [Tooltip("How quickly speed changes on the ground (m/s²).")]
         public float groundAcceleration = 60f;
@@ -31,20 +50,23 @@ namespace EverRealm.Characters
 
         CharacterController controller;
         LocalTime localTime;
+        Stamina stamina;
         Vector3 horizontalVelocity, impulseVelocity;
         float verticalVelocity;
         float clock, lastGroundedTime = float.NegativeInfinity, lastJumpRequestTime = float.NegativeInfinity;
         Vector3? facingRequest;
         float facingRequestSpeed;
 
-        /// <summary>World-space horizontal velocity the controller wants this frame.</summary>
-        public Vector3 DesiredVelocity { get; set; }
-        /// <summary>Scales <see cref="DesiredVelocity"/>; combat states use it to slow movement.</summary>
-        public float SpeedMultiplier { get; set; } = 1f;
+        /// <summary>World-space direction the brain wants to move in; magnitude 0..1 scales the gait speed.</summary>
+        public Vector3 MoveIntent { get; set; }
+        public Gait Gait { get; set; } = Gait.Run;
+        /// <summary>Set by the current action each frame; <see cref="MovementRestriction.None"/> when free.</summary>
+        public MovementRestriction Restriction { get; set; } = MovementRestriction.None;
         /// <summary>When set, replaces horizontal movement entirely (no acceleration), e.g. for dodges.</summary>
         public Vector3? ScriptedVelocity { get; set; }
-        public bool JumpAllowed { get; set; } = true;
 
+        /// <summary>The gait actually used last frame, after restrictions and stamina.</summary>
+        public Gait ResolvedGait { get; private set; }
         public bool IsGrounded => controller.isGrounded;
         public Vector3 HorizontalVelocity => horizontalVelocity;
         /// <summary>Velocity the controller actually achieved last move, after collisions.</summary>
@@ -55,6 +77,7 @@ namespace EverRealm.Characters
         {
             controller = GetComponent<CharacterController>();
             localTime = GetComponent<LocalTime>();
+            stamina = GetComponent<Stamina>();
         }
 
         public void RequestJump() => lastJumpRequestTime = clock;
@@ -67,6 +90,9 @@ namespace EverRealm.Characters
         }
 
         public void AddImpulse(Vector3 velocity) => impulseVelocity += velocity;
+
+        /// <summary>Whether other agents bump into this body (off for corpses).</summary>
+        public void SetCollidesWithAgents(bool collides) => controller.detectCollisions = collides;
 
         public void Teleport(Vector3 position)
         {
@@ -85,15 +111,32 @@ namespace EverRealm.Characters
             clock += dt;
             if (controller.isGrounded) lastGroundedTime = clock;
 
-            UpdateHorizontal(dt);
-            UpdateFacing(dt);
+            Vector3 desired = DesiredVelocity(dt);
+            UpdateHorizontal(desired, dt);
+            UpdateFacing(desired, dt);
             UpdateVertical(dt);
             impulseVelocity = Vector3.MoveTowards(impulseVelocity, Vector3.zero, impulseDrag * dt);
 
             controller.Move((horizontalVelocity + impulseVelocity + Vector3.up * verticalVelocity) * dt);
         }
 
-        void UpdateHorizontal(float dt)
+        Vector3 DesiredVelocity(float dt)
+        {
+            Vector3 intent = Vector3.ClampMagnitude(MoveIntent, 1f);
+            intent.y = 0f;
+            bool moving = intent.sqrMagnitude > 0.01f;
+
+            Gait gait = Gait;
+            if (gait == Gait.Sprint && (!Restriction.AllowSprint || (stamina != null && stamina.IsEmpty) || !moving))
+                gait = Gait.Run;
+            if (gait == Gait.Sprint && stamina != null) stamina.Spend(sprintStaminaPerSecond * dt);
+            ResolvedGait = gait;
+
+            float speed = gait switch { Gait.Walk => walkSpeed, Gait.Sprint => sprintSpeed, _ => runSpeed };
+            return intent * (speed * Restriction.SpeedMultiplier);
+        }
+
+        void UpdateHorizontal(Vector3 desired, float dt)
         {
             if (ScriptedVelocity.HasValue)
             {
@@ -101,15 +144,15 @@ namespace EverRealm.Characters
                 return;
             }
             float acceleration = controller.isGrounded ? groundAcceleration : airAcceleration;
-            horizontalVelocity = Vector3.MoveTowards(horizontalVelocity, DesiredVelocity * SpeedMultiplier, acceleration * dt);
+            horizontalVelocity = Vector3.MoveTowards(horizontalVelocity, desired, acceleration * dt);
         }
 
-        void UpdateFacing(float dt)
+        void UpdateFacing(Vector3 desired, float dt)
         {
             Vector3 direction;
             float speed;
             if (facingRequest.HasValue) { direction = facingRequest.Value; speed = facingRequestSpeed; }
-            else { direction = DesiredVelocity; speed = turnSpeed; }
+            else { direction = desired; speed = turnSpeed; }
             facingRequest = null;
 
             direction.y = 0f;
@@ -123,7 +166,7 @@ namespace EverRealm.Characters
             if (controller.isGrounded && verticalVelocity < 0f)
                 verticalVelocity = -2f; // Keep a small downward push so isGrounded stays reliable on steps.
 
-            bool canJump = JumpAllowed && clock - lastGroundedTime <= coyoteTime;
+            bool canJump = Restriction.AllowJump && clock - lastGroundedTime <= coyoteTime;
             bool wantsJump = clock - lastJumpRequestTime <= jumpBuffer;
             if (canJump && wantsJump)
             {

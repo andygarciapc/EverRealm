@@ -716,6 +716,11 @@ GameObject:
   - component: {fileID: 1526207522914436614}
   - component: {fileID: 8476500578979462421}
   - component: {fileID: 6364145005511129363}
+  - component: {fileID: 1830744140873318492}
+  - component: {fileID: 3687467664024083212}
+  - component: {fileID: 6147685166358827620}
+  - component: {fileID: 5590546494806697405}
+  - component: {fileID: 6726014517979855857}
   m_Layer: 0
   m_Name: Goblin
   m_TagString: Untagged
@@ -788,6 +793,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 0d6795ad4aebd7f4e8d5c9ccfe077b9c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: EverRealm::EverRealm.Characters.CharacterMotor
+  walkSpeed: 2.5
+  runSpeed: 4.6
+  sprintSpeed: 7
+  sprintStaminaPerSecond: 15
   groundAcceleration: 60
   airAcceleration: 20
   turnSpeed: 720
@@ -809,11 +818,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: EverRealm::EverRealm.Combat.Combatant
   weapon: {fileID: 11400000, guid: 0ce8fc18faaf9ab4f91a88bc4ea23ca7, type: 2}
-  team: 1
   maxHealth: 60
-  maxStamina: 100
-  staminaRegen: 35
-  staminaRegenDelay: 0.8
   blockArc: 140
   parryWindow: 0.15
   blockStaminaPerDamage: 1.2
@@ -855,6 +860,7 @@ MonoBehaviour:
   hitMask:
     serializedVersion: 2
     m_Bits: 4294967295
+  maxHitHeightDifference: 1.5
 --- !u!114 &1526207522914436614
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -869,17 +875,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: EverRealm::EverRealm.Enemies.GoblinAI
   aggroRadius: 14
   leashRadius: 28
-  walkSpeed: 2.5
-  chaseSpeed: 4.6
-  strafeSpeed: 1.6
   wanderRadius: 4
-  faceTurnSpeed: 540
-  spacingFactor: 0.8
-  waitingDistance: 1.5
-  attackCooldownMin: 1
-  attackCooldownMax: 2.2
-  attackFacingAngle: 35
-  corpseTime: 3
+  raidLingerSeconds: 20
 --- !u!114 &8476500578979462421
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -894,6 +891,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: EverRealm::EverRealm.Combat.CombatVisuals
   visualRoot: {fileID: 5728813539236263117}
   weaponPivot: {fileID: 2544388588020947441}
+  weaponModel: {fileID: 0}
   restPose: {x: 60, y: 10, z: 0}
   windupPose: {x: -50, y: 75, z: 0}
   swingEndPose: {x: 20, y: -85, z: 0}
@@ -925,10 +923,92 @@ MonoBehaviour:
   weaponRenderers:
   - {fileID: 6916793461717988837}
   - {fileID: 3206713298415627018}
-  impulseSource: {fileID: 0}
   flashColor: {r: 1, g: 1, b: 1, a: 1}
   flashDuration: 0.1
   windupTint: {r: 1, g: 0.15, b: 0.1, a: 1}
   shakeWhenHurt: 0.6
   shakeWhenBlocking: 0.3
   shakeWhenLandingHit: 0.25
+--- !u!114 &1830744140873318492
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7865891272408229348}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a95c5be44e7f9264593c423a70eb854b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: EverRealm::EverRealm.Characters.Stamina
+  max: 100
+  regenPerSecond: 35
+  regenDelay: 0.8
+--- !u!114 &3687467664024083212
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7865891272408229348}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d4ca1de3695936742806b219ddd8e258, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: EverRealm::EverRealm.Characters.Agent
+  faction: 1
+--- !u!114 &6147685166358827620
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7865891272408229348}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6807b11b5096ce240a3308c5ebae2ad3, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: EverRealm::EverRealm.Characters.OceanRescue
+  drownDepth: 1.2
+--- !u!114 &5590546494806697405
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7865891272408229348}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d164ea952ea079541b5f6ce0ab1116a3, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: EverRealm::EverRealm.Combat.MeleeTactics
+  strafeFraction: 0.35
+  faceTurnSpeed: 540
+  sprintDistance: 7
+  spacingFactor: 0.8
+  waitingDistance: 1.5
+  attackCooldownMin: 1
+  attackCooldownMax: 2.2
+  attackFacingAngle: 35
+  blockChance: 0.4
+  dodgeChance: 0.3
+  blockReactionMin: 0.05
+  blockReactionMax: 0.15
+  dodgeReactionMin: 0.15
+  dodgeReactionMax: 0.35
+  parryAttemptChance: 0.25
+  parryTimingSpread: 0.25
+  lowStaminaFraction: 0.3
+  feintChance: 0.2
+--- !u!114 &6726014517979855857
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7865891272408229348}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: be68721afb1a8ab448af2f5945fab642, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: EverRealm::EverRealm.Characters.Speech

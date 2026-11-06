@@ -47,5 +47,14 @@ namespace EverRealm.World
             if (cx >= ChunksPerSide || cz >= ChunksPerSide) return BlockType.Air;
             return (BlockType)GetChunk(cx, cz)[LocalIndex(x - cx * ChunkSize, y, z - cz * ChunkSize)];
         }
+
+        /// <summary>Sets a block at global coordinates (ignored outside the world), raising the chunk top if needed.</summary>
+        public void SetBlock(int x, int y, int z, BlockType block)
+        {
+            if (y < 0 || y >= Height || x < 0 || z < 0 || x >= SizeInBlocks || z >= SizeInBlocks) return;
+            int cx = x / ChunkSize, cz = z / ChunkSize;
+            GetChunk(cx, cz)[LocalIndex(x - cx * ChunkSize, y, z - cz * ChunkSize)] = (byte)block;
+            if (block != BlockType.Air && y + 1 > GetChunkTop(cx, cz)) SetChunkTop(cx, cz, y + 1);
+        }
     }
 }

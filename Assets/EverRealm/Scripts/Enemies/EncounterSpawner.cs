@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using EverRealm.Combat;
+using EverRealm.Player;
 using EverRealm.World;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -7,14 +8,17 @@ using UnityEngine.InputSystem;
 namespace EverRealm.Enemies
 {
     /// <summary>
-    /// Places seeded goblin camps on the island after every generation, and spawns a goblin in front
-    /// of the player with the G debug key.
+    /// Places seeded goblin camps on the island (away from the hamlet) after every generation, each goblin
+    /// with a varied dodge style. Camps slowly regrow over world time, up to a cap, even when wiped out.
+    /// Spawns a goblin in front of the controlled character with the G debug key.
     /// </summary>
     public sealed class EncounterSpawner : MonoBehaviour
     {
         [SerializeField] WorldBuilder world;
+        [SerializeField] WorldClock clock;
         [SerializeField] GoblinAI goblinPrefab;
-        [SerializeField] Combatant player;
+        [Tooltip("Only used to place debug spawns in front of the controlled character.")]
+        [SerializeField] PlayerSession session;
 
         [Header("Camps")]
         public int campCount = 6;
@@ -23,7 +27,12 @@ namespace EverRealm.Enemies
         [Tooltip("Goblins scatter this far around their camp centre.")]
         public float campRadius = 3f;
         public float minDistanceFromSpawn = 35f;
+        [Tooltip("Keeps camps far enough from the hamlet that only raids, not wandering, bring goblins there.")]
+        public float minDistanceFromHamlet = 50f;
         public float minCampSpacing = 40f;
+        [Tooltip("A camp regrows one goblin this often (in-game hours) while it has fewer than its capacity.")]
+        public float regrowHours = 12f;
+        public int campCapacity = 4;
 
         [Header("Debug spawn")]
         public float debugSpawnDistance = 7f;
@@ -31,13 +40,18 @@ namespace EverRealm.Enemies
         // Dev-only key, kept out of the player's action map.
         readonly InputAction spawnAction = new InputAction("Spawn Goblin", binding: "<Keyboard>/g");
         readonly List<GoblinAI> goblins = new List<GoblinAI>();
+        readonly List<Vector3> camps = new List<Vector3>();
+        readonly List<double> nextRegrowAt = new List<double>();
+
+        /// <summary>Every goblin placed so far, dead or alive (destroyed ones may be null).</summary>
+        public IReadOnlyList<GoblinAI> Goblins => goblins;
 
         public int AliveCount
         {
             get
             {
                 goblins.RemoveAll(g => g == null);
-                return goblins.Count;
+                return goblins.FindAll(g => !g.GetComponent<Combatant>().IsDead).Count;
             }
         }
 
@@ -63,19 +77,22 @@ namespace EverRealm.Enemies
             foreach (GoblinAI goblin in goblins)
                 if (goblin != null) Destroy(goblin.gameObject);
             goblins.Clear();
+            camps.Clear();
+            nextRegrowAt.Clear();
 
             var rng = new System.Random(world.Settings.seed * 31 + 7);
             float size = world.World.SizeInMeters;
             Vector3 spawn = world.FindSpawnPoint();
-            var camps = new List<Vector3>();
 
             for (int attempt = 0; attempt < 300 && camps.Count < campCount; attempt++)
             {
                 float x = (float)rng.NextDouble() * size, z = (float)rng.NextDouble() * size;
                 if (!world.TryGetLandSurface(x, z, out Vector3 camp)) continue;
                 if (FlatDistance(camp, spawn) < minDistanceFromSpawn) continue;
+                if (world.Settlement != null && FlatDistance(camp, world.Settlement.Square) < minDistanceFromHamlet) continue;
                 if (camps.Exists(c => FlatDistance(c, camp) < minCampSpacing)) continue;
                 camps.Add(camp);
+                nextRegrowAt.Add(clock.TotalHours + regrowHours);
 
                 int count = rng.Next(minPerCamp, maxPerCamp + 1);
                 for (int i = 0; i < count; i++)
@@ -84,25 +101,48 @@ namespace EverRealm.Enemies
                     float gx = camp.x + (float)(System.Math.Cos(angle) * radius);
                     float gz = camp.z + (float)(System.Math.Sin(angle) * radius);
                     if (world.TryGetLandSurface(gx, gz, out Vector3 position))
-                        Spawn(position, camp, (float)(rng.NextDouble() * 360));
+                        Spawn(position, camp, (float)(rng.NextDouble() * 360), (WeightClass)rng.Next(3));
                 }
             }
         }
 
-        void OnSpawnPressed(InputAction.CallbackContext _)
+        void Update()
         {
-            Vector3 forward = player.transform.forward;
-            Vector3 point = player.transform.position + forward * debugSpawnDistance;
-            if (world.TryGetLandSurface(point.x, point.z, out Vector3 position))
-                Spawn(position, position, Quaternion.LookRotation(-forward).eulerAngles.y);
+            for (int i = 0; i < camps.Count; i++)
+            {
+                if (clock.TotalHours < nextRegrowAt[i]) continue;
+                nextRegrowAt[i] = clock.TotalHours + regrowHours;
+                if (Strength(camps[i]) >= campCapacity) continue;
+                Vector2 offset = Random.insideUnitCircle * campRadius;
+                if (world.TryGetLandSurface(camps[i].x + offset.x, camps[i].z + offset.y, out Vector3 position))
+                    Spawn(position, camps[i], Random.Range(0f, 360f), (WeightClass)Random.Range(0, 3));
+            }
         }
 
-        GoblinAI Spawn(Vector3 position, Vector3 home, float yaw)
+        /// <summary>Living goblins that call <paramref name="camp"/> home, including any out raiding.</summary>
+        int Strength(Vector3 camp)
+        {
+            int count = 0;
+            foreach (GoblinAI goblin in goblins)
+                if (goblin != null && goblin.Home == camp && !goblin.GetComponent<Combatant>().IsDead) count++;
+            return count;
+        }
+
+        void OnSpawnPressed(InputAction.CallbackContext _)
+        {
+            Combatant body = session.CurrentBody;
+            if (body == null) return;
+            Vector3 forward = body.transform.forward;
+            Vector3 point = body.transform.position + forward * debugSpawnDistance;
+            if (world.TryGetLandSurface(point.x, point.z, out Vector3 position))
+                Spawn(position, position, Quaternion.LookRotation(-forward).eulerAngles.y, (WeightClass)Random.Range(0, 3));
+        }
+
+        GoblinAI Spawn(Vector3 position, Vector3 home, float yaw, WeightClass weightClass)
         {
             GoblinAI goblin = Instantiate(goblinPrefab, position + Vector3.up * 0.1f, Quaternion.Euler(0f, yaw, 0f), transform);
-            goblin.Target = player;
             goblin.Home = home;
-            goblin.SeaLevel = world.Settings.seaLevel;
+            goblin.GetComponent<Combatant>().weightClass = weightClass;
             goblins.Add(goblin);
             return goblin;
         }

@@ -8,5 +8,8 @@ namespace EverRealm.World
         Dirt = 2,
         Stone = 3,
         Sand = 4,
+        Wood = 5,
+        Planks = 6,
+        Thatch = 7,
     }
 }

@@ -25,7 +25,10 @@ namespace EverRealm.Combat
         public float attackTurnSpeed = 540f;
 
         [Header("Cost and impact")]
+        [Tooltip("Spent when the swing begins (end of wind-up).")]
         public float staminaCost = 8f;
+        [Tooltip("Spent when the wind-up is cancelled into a dodge (a feint), on top of the dodge's own cost.")]
+        public float feintStaminaCost = 4f;
         [Tooltip("How long attacker and target freeze when the swing connects.")]
         public float hitStop = 0.08f;
     }

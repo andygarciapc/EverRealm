@@ -5,16 +5,17 @@ namespace EverRealm.Combat
 {
     /// <summary>
     /// Visual and camera feedback for one character: a white flash when hurt, a red tint that builds on
-    /// the weapon during wind-up (the telegraph), and camera shake when an impulse source is assigned
-    /// (only the local player has one).
+    /// the weapon during wind-up (the telegraph), and camera shake while the viewer's impulse source is
+    /// assigned (only to the body the local player controls).
     /// </summary>
     [RequireComponent(typeof(Combatant))]
     public sealed class CombatFeedback : MonoBehaviour
     {
         [SerializeField] Renderer[] bodyRenderers;
         [SerializeField] Renderer[] weaponRenderers;
-        [Tooltip("Optional. Only the local player shakes the camera.")]
-        [SerializeField] CinemachineImpulseSource impulseSource;
+
+        /// <summary>Set by <c>PlayerSession</c> on the body the local player controls; null otherwise.</summary>
+        public CinemachineImpulseSource ImpulseSource { get; set; }
 
         [Header("Flash")]
         public Color flashColor = Color.white;
@@ -75,7 +76,7 @@ namespace EverRealm.Combat
 
         void Shake(float force)
         {
-            if (impulseSource != null && force > 0f) impulseSource.GenerateImpulseWithForce(force);
+            if (ImpulseSource != null && force > 0f) ImpulseSource.GenerateImpulseWithForce(force);
         }
 
         void LateUpdate()

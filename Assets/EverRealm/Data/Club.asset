@@ -20,5 +20,6 @@ MonoBehaviour:
   active: 0.15
   recovery: 0.6
   attackTurnSpeed: 240
-  staminaCost: 0
+  staminaCost: 8
+  feintStaminaCost: 4
   hitStop: 0.08

@@ -5,13 +5,17 @@ namespace EverRealm.Combat
     /// <summary>
     /// Placeholder procedural animation driven by <see cref="Combatant"/> state: the weapon pivot moves
     /// through rest, wind-up, swing and guard poses, and the visual root rolls, hops, lunges, staggers
-    /// and falls. Runs on the character's local time so hit-stop freezes it too.
+    /// and falls. Rigged bodies with a <see cref="Characters.CharacterAnimator"/> take dodges and death from
+    /// their clips and only keep the stagger lean (and the guard pose, through <see cref="ArmPoser"/>).
+    /// Runs on the character's local time so hit-stop freezes it too.
     /// </summary>
     [RequireComponent(typeof(Combatant))]
     public sealed class CombatVisuals : MonoBehaviour
     {
         [SerializeField] Transform visualRoot;
         [SerializeField] Transform weaponPivot;
+        [Tooltip("Holds the weapon's renderers (the hand mount); shown and hidden by SetWeaponVisible.")]
+        [SerializeField] Transform weaponModel;
 
         [Header("Weapon poses (pivot local euler angles)")]
         public Vector3 restPose = new Vector3(60f, 10f, 0f);
@@ -31,11 +35,28 @@ namespace EverRealm.Combat
 
         Combatant combatant;
         Vector3 pivotHome;
+        Vector3 bodyHome;
+        bool animated;
 
         void Awake()
         {
             combatant = GetComponent<Combatant>();
             pivotHome = weaponPivot.localPosition;
+            // Stand the model's feet (at its origin) on the ground: the capsule's bottom, less the skin width the
+            // CharacterController hovers by.
+            var controller = GetComponent<CharacterController>();
+            bodyHome = visualRoot.localPosition;
+            if (controller != null) bodyHome.y += controller.center.y - controller.height * 0.5f - controller.skinWidth;
+            // Bodies with animation clips (CharacterAnimator) get dodges and death from the clips; only the
+            // stagger lean, which has no clip yet, stays procedural for them.
+            animated = TryGetComponent(out Characters.CharacterAnimator _);
+        }
+
+        /// <summary>Shows or hides the carried weapon model (e.g. for unarmed villagers). Doesn't change the weapon's stats.</summary>
+        public void SetWeaponVisible(bool visible)
+        {
+            foreach (Renderer weaponRenderer in (weaponModel != null ? weaponModel : weaponPivot).GetComponentsInChildren<Renderer>(true))
+                weaponRenderer.enabled = visible;
         }
 
         void LateUpdate()
@@ -89,7 +110,7 @@ namespace EverRealm.Combat
 
             switch (combatant.State)
             {
-                case CombatState.Dodging:
+                case CombatState.Dodging when !animated:
                 {
                     DodgeProfile dodge = combatant.CurrentDodge;
                     float t = Mathf.Clamp01(combatant.StateTime / dodge.duration);
@@ -114,7 +135,7 @@ namespace EverRealm.Combat
                 case CombatState.Staggered:
                     rotation = Quaternion.AngleAxis(-staggerLean * Mathf.Sin(Mathf.PI * combatant.StateProgress), Vector3.right);
                     break;
-                case CombatState.Dead:
+                case CombatState.Dead when !animated:
                     rotation = Quaternion.AngleAxis(-90f * Mathf.SmoothStep(0f, 1f, combatant.StateTime / deathFallTime), Vector3.right);
                     break;
             }
@@ -125,7 +146,7 @@ namespace EverRealm.Combat
                 offset += center - rotation * center;
             }
             visualRoot.localRotation = rotation;
-            visualRoot.localPosition = offset;
+            visualRoot.localPosition = bodyHome + offset;
         }
     }
 }

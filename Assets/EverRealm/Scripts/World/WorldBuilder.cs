@@ -8,7 +8,7 @@ using UnityEngine.Rendering;
 namespace EverRealm.World
 {
     /// <summary>
-    /// Generates the island at startup and on demand (R = new seed, B = toggle block size),
+    /// Generates the island and its hamlet at startup and on demand (R = new seed),
     /// creating one GameObject per chunk plus the ocean plane and edge walls.
     /// </summary>
     [DefaultExecutionOrder(-100)] // Generate before anything subscribes; listeners place themselves in Start.
@@ -17,8 +17,6 @@ namespace EverRealm.World
         [SerializeField] WorldSettings settings;
         [SerializeField] Material terrainMaterial;
         [SerializeField] Material waterMaterial;
-        [Tooltip("Block sizes cycled with the B key, in metres.")]
-        [SerializeField] float[] blockSizeOptions = { 1f, 0.5f };
 
         readonly List<GameObject> spawned = new List<GameObject>();
         readonly List<Mesh> chunkMeshes = new List<Mesh>();
@@ -27,6 +25,8 @@ namespace EverRealm.World
 
         public WorldSettings Settings { get; private set; }
         public WorldData World { get; private set; }
+        /// <summary>The island's hamlet, or null if no site was flat enough.</summary>
+        public Settlement Settlement { get; private set; }
         public float GenerationMs { get; private set; }
         public float MeshingMs { get; private set; }
 
@@ -35,11 +35,10 @@ namespace EverRealm.World
 
         // Dev-only keys, kept out of the player's action map.
         readonly InputAction regenerateAction = new InputAction("Regenerate", binding: "<Keyboard>/r");
-        readonly InputAction toggleBlockSizeAction = new InputAction("Toggle Block Size", binding: "<Keyboard>/b");
 
         void Awake()
         {
-            // Work on a copy so runtime seed/block-size changes never dirty the asset.
+            // Work on a copy so runtime seed changes never dirty the asset.
             Settings = Instantiate(settings);
             Build();
         }
@@ -47,29 +46,18 @@ namespace EverRealm.World
         void OnEnable()
         {
             regenerateAction.performed += OnRegenerate;
-            toggleBlockSizeAction.performed += OnToggleBlockSize;
             regenerateAction.Enable();
-            toggleBlockSizeAction.Enable();
         }
 
         void OnDisable()
         {
             regenerateAction.Disable();
-            toggleBlockSizeAction.Disable();
             regenerateAction.performed -= OnRegenerate;
-            toggleBlockSizeAction.performed -= OnToggleBlockSize;
         }
 
         void OnRegenerate(InputAction.CallbackContext _)
         {
             Settings.seed = UnityEngine.Random.Range(0, int.MaxValue);
-            Build();
-        }
-
-        void OnToggleBlockSize(InputAction.CallbackContext _)
-        {
-            int current = Array.IndexOf(blockSizeOptions, Settings.blockSize);
-            Settings.blockSize = blockSizeOptions[(current + 1) % blockSizeOptions.Length];
             Build();
         }
 
@@ -79,6 +67,7 @@ namespace EverRealm.World
 
             var timer = Stopwatch.StartNew();
             World = new TerrainGenerator(Settings).Generate();
+            Settlement = SettlementBuilder.Build(World, Settings);
             GenerationMs = (float)timer.Elapsed.TotalMilliseconds;
 
             timer.Restart();
@@ -94,7 +83,8 @@ namespace EverRealm.World
             SpawnEdgeWalls();
 
             UnityEngine.Debug.Log($"[EverRealm] Island seed {Settings.seed}, block {Settings.blockSize}m: " +
-                                  $"generate {GenerationMs:F0} ms, mesh+collide {MeshingMs:F0} ms");
+                                  $"generate {GenerationMs:F0} ms, mesh+collide {MeshingMs:F0} ms, " +
+                                  (Settlement != null ? $"hamlet of {Settlement.Houses.Count} huts" : "no hamlet site"));
             Generated?.Invoke();
         }
 
@@ -155,9 +145,10 @@ namespace EverRealm.World
             if (palette != null) Destroy(palette);
         }
 
-        /// <summary>Top of the land column nearest the island centre, searching outward in rings.</summary>
+        /// <summary>Where a newcomer starts: the hamlet square, or else the land column nearest the island centre.</summary>
         public Vector3 FindSpawnPoint()
         {
+            if (Settlement != null) return Settlement.Square + Vector3.up * 0.5f;
             int center = World.SizeInBlocks / 2;
             float minHeight = Settings.seaLevel + Settings.beachHeight;
             for (int radius = 0; radius < center; radius++)

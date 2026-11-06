@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using EverRealm.Characters;
 using EverRealm.Combat;
 using UnityEngine;
@@ -6,126 +5,155 @@ using UnityEngine;
 namespace EverRealm.Enemies
 {
     /// <summary>
-    /// Goblin fighter: wanders near its camp, chases a target that comes within aggro range, keeps
-    /// spacing at its weapon's reach and swings when it holds the target's attack slot (one attacker
-    /// per target at a time). Leashes back to camp if dragged too far.
+    /// Goblin brain. Perceives the nearest hostile agent through <see cref="AgentDirectory"/>, wanders near
+    /// its camp, and fights through <see cref="MeleeTactics"/>. Sent on a raid, it runs to the war party's
+    /// muster point, waits for the order to attack, then marches on the target, fights whoever it finds there
+    /// and goes home once nobody is left nearby. Uses only the commands any brain has.
     /// </summary>
-    [RequireComponent(typeof(CharacterMotor), typeof(Combatant))]
+    [RequireComponent(typeof(CharacterMotor), typeof(Combatant), typeof(Agent))]
+    [RequireComponent(typeof(MeleeTactics))]
     public sealed class GoblinAI : MonoBehaviour
     {
         [Header("Awareness")]
         public float aggroRadius = 14f;
-        [Tooltip("Gives up and walks home when this far from camp.")]
+        [Tooltip("Gives up and walks home when this far from camp (or from the muster point or raid target while raiding).")]
         public float leashRadius = 28f;
 
         [Header("Movement")]
-        public float walkSpeed = 2.5f;
-        public float chaseSpeed = 4.6f;
-        public float strafeSpeed = 1.6f;
         public float wanderRadius = 4f;
-        public float faceTurnSpeed = 540f;
 
-        [Header("Fighting")]
-        [Tooltip("Preferred distance as a fraction of weapon reach.")]
-        public float spacingFactor = 0.8f;
-        [Tooltip("Extra distance kept while waiting for another goblin to finish attacking.")]
-        public float waitingDistance = 1.5f;
-        public float attackCooldownMin = 1f;
-        public float attackCooldownMax = 2.2f;
-        [Tooltip("Only swings when the target is within this many degrees of its facing.")]
-        public float attackFacingAngle = 35f;
-        [Tooltip("Corpse lingers this long before being removed.")]
-        public float corpseTime = 3f;
+        [Header("Raids")]
+        [Tooltip("Seconds spent at the raid target without finding anyone before marching home.")]
+        public float raidLingerSeconds = 20f;
 
-        enum Mode { Idle, Chase, Fight, Return }
+        enum Mode { Idle, Fight, Return, Raid }
 
-        // One attacker per target keeps group fights readable.
-        static readonly Dictionary<Combatant, GoblinAI> AttackSlots = new Dictionary<Combatant, GoblinAI>();
-
-        CharacterMotor motor;
         Combatant combatant;
+        MeleeTactics tactics;
+        Steering steering;
+        Agent self;
         Mode mode;
-        bool attacking;
-        float nextAttackTime, nextWanderTime, nextStrafeFlip, stuckTime, strafeSign = 1f;
-        Vector3 wanderTarget;
+        float nextWanderTime, raidIdleTime, raidLeash;
+        Vector3 wanderTarget, raidTarget, musterPoint;
 
-        public Combatant Target { get; set; }
         public Vector3 Home { get; set; }
-        public float SeaLevel { get; set; } = float.NegativeInfinity;
+        public bool IsRaiding { get; private set; }
+        /// <summary>On a raid, still gathering with the rest of the war party.</summary>
+        public bool IsMustering { get; private set; }
+        /// <summary>Waiting at the muster point for the order to attack.</summary>
+        public bool IsMustered => IsMustering && Steering.FlatDistance(transform.position, musterPoint) < 3f;
+
+        public bool IsFighting => mode == Mode.Fight;
+
+        /// <summary>Where the leash is anchored: the raid target while raiding, otherwise home.</summary>
+        Vector3 Anchor => IsRaiding ? raidTarget : Home;
+        /// <summary>While raiding the leash reaches past the muster point, so a fight there doesn't end the raid.</summary>
+        float Leash => IsRaiding ? raidLeash : leashRadius;
+        Vector3 MarchTarget => IsMustering ? musterPoint : raidTarget;
 
         void Awake()
         {
-            motor = GetComponent<CharacterMotor>();
             combatant = GetComponent<Combatant>();
+            tactics = GetComponent<MeleeTactics>();
+            steering = new Steering(GetComponent<CharacterMotor>());
+            self = GetComponent<Agent>();
             Home = transform.position;
             wanderTarget = Home;
         }
 
-        void OnEnable() => combatant.Died += OnDied;
-        void OnDisable()
+        void OnDisable() => tactics.Disengage();
+
+        /// <summary>Gather at <paramref name="muster"/>, then (on <see cref="Charge"/>) attack whoever is at <paramref name="target"/>.</summary>
+        public void Raid(Vector3 target, Vector3 muster)
         {
-            combatant.Died -= OnDied;
-            ReleaseSlot();
+            raidTarget = target;
+            musterPoint = muster;
+            raidLeash = Steering.FlatDistance(muster, target) + leashRadius;
+            IsMustering = true;
+            raidIdleTime = 0f;
+            IsRaiding = true;
+            if (mode != Mode.Fight) mode = Mode.Raid;
         }
 
-        void OnDied()
+        /// <summary>The war party has gathered: march on the raid target, with a war cry if <paramref name="warCry"/>.</summary>
+        public void Charge(bool warCry)
         {
-            ReleaseSlot();
-            Destroy(gameObject, corpseTime);
+            IsMustering = false;
+            if (warCry && !combatant.IsDead && TryGetComponent(out Speech speech)) speech.Say("Raaah!", Volume.Shout);
         }
 
         void Update()
         {
+            if (combatant.IsDead || combatant.LocalTime.DeltaTime <= 0f) return;
             float dt = combatant.LocalTime.DeltaTime;
-            if (dt <= 0f) return;
-            if (combatant.IsDead)
-            {
-                motor.DesiredVelocity = Vector3.zero;
-                return;
-            }
 
-            if (attacking && combatant.State != CombatState.Windup && combatant.State != CombatState.Active
-                && combatant.State != CombatState.Recovery)
-            {
-                attacking = false;
-                ReleaseSlot();
-            }
-
-            UpdateMode();
+            Perceive();
+            UpdateMode(dt);
             switch (mode)
             {
                 case Mode.Idle: Wander(); break;
-                case Mode.Chase: MoveTowards(Target.transform.position, chaseSpeed); break;
-                case Mode.Fight: Fight(); break;
-                case Mode.Return: MoveTowards(Home, walkSpeed); break;
+                case Mode.Return: steering.MoveTowards(Home, Gait.Walk); break;
+                case Mode.Raid: MarchOnRaidTarget(); break;
             }
-
-            JumpIfStuck(dt);
-            if (transform.position.y < SeaLevel - 1.5f) motor.Teleport(Home + Vector3.up);
+            tactics.Tick(mode == Mode.Fight); // Reacts to the target's swings even while walking home.
+            steering.JumpIfStuck(dt);
         }
 
-        void UpdateMode()
+        // ---- Perception and modes ----
+
+        void Perceive()
         {
-            bool targetAlive = Target != null && !Target.IsDead;
-            float toTarget = targetAlive ? FlatDistance(transform.position, Target.transform.position) : float.PositiveInfinity;
-            float fromHome = FlatDistance(transform.position, Home);
-            bool targetNearHome = targetAlive && FlatDistance(Target.transform.position, Home) < leashRadius;
+            Combatant target = tactics.Target;
+            if (target != null && !target.IsDead && Steering.FlatDistance(transform.position, target.transform.position) <= leashRadius) return;
+            Agent nearest = AgentDirectory.FindNearest(transform.position, aggroRadius,
+                a => a != self && a.IsAlive && self.IsHostileTo(a) && a.Combatant != null);
+            if (nearest != null) tactics.Engage(nearest.Combatant);
+            else tactics.Disengage();
+        }
+
+        void UpdateMode(float dt)
+        {
+            Combatant target = tactics.Target;
+            bool hasTarget = target != null;
+            float fromAnchor = Steering.FlatDistance(transform.position, Anchor);
 
             switch (mode)
             {
                 case Mode.Idle:
-                    if (toTarget < aggroRadius) mode = Mode.Chase;
+                case Mode.Raid:
+                    if (hasTarget)
+                    {
+                        mode = Mode.Fight;
+                        raidIdleTime = 0f;
+                    }
                     break;
-                case Mode.Chase:
                 case Mode.Fight:
-                    if (!targetAlive || fromHome > leashRadius) { mode = Mode.Return; ReleaseSlot(); }
-                    else mode = toTarget <= combatant.Weapon.reach * 1.6f ? Mode.Fight : Mode.Chase;
+                    if (hasTarget && fromAnchor <= Leash) break;
+                    tactics.Disengage();
+                    mode = IsRaiding && fromAnchor <= Leash ? Mode.Raid : Mode.Return;
+                    if (mode == Mode.Return) EndRaid();
                     break;
                 case Mode.Return:
-                    if (toTarget < aggroRadius && targetNearHome) mode = Mode.Chase;
-                    else if (fromHome < 1.5f) mode = Mode.Idle;
+                    if (hasTarget && Steering.FlatDistance(target.transform.position, Home) < leashRadius) mode = Mode.Fight;
+                    else if (Steering.FlatDistance(transform.position, Home) < 1.5f) mode = Mode.Idle;
                     break;
             }
+
+            if (mode == Mode.Raid && !IsMustering && Steering.FlatDistance(transform.position, raidTarget) < 4f)
+            {
+                raidIdleTime += dt;
+                if (raidIdleTime >= raidLingerSeconds)
+                {
+                    EndRaid();
+                    mode = Mode.Return;
+                }
+            }
+        }
+
+        void EndRaid()
+        {
+            IsRaiding = false;
+            IsMustering = false;
         }
 
         void Wander()
@@ -136,87 +164,14 @@ namespace EverRealm.Enemies
                 wanderTarget = Home + new Vector3(offset.x, 0f, offset.y);
                 nextWanderTime = Time.time + Random.Range(2f, 5f);
             }
-            if (FlatDistance(transform.position, wanderTarget) > 0.5f) MoveTowards(wanderTarget, walkSpeed);
-            else motor.DesiredVelocity = Vector3.zero;
+            if (Steering.FlatDistance(transform.position, wanderTarget) > 0.5f) steering.MoveTowards(wanderTarget, Gait.Walk);
+            else steering.Stop();
         }
 
-        void Fight()
+        void MarchOnRaidTarget()
         {
-            Vector3 toTarget = Target.transform.position - transform.position;
-            toTarget.y = 0f;
-            float distance = toTarget.magnitude;
-            Vector3 direction = distance > 0.001f ? toTarget / distance : transform.forward;
-            motor.FaceTowards(direction, faceTurnSpeed);
-
-            bool hasSlot = HoldsSlot();
-            float reach = combatant.Weapon.reach + Target.Motor.Radius;
-            float preferred = reach * spacingFactor + (hasSlot || SlotFree() ? 0f : waitingDistance);
-
-            // Close or open the gap toward the preferred spacing, and circle a little while waiting.
-            Vector3 radial = direction * Mathf.Clamp(distance - preferred, -1f, 1f) * chaseSpeed;
-            Vector3 tangent = Vector3.Cross(Vector3.up, direction) * (strafeSign * strafeSpeed);
-            if (Time.time >= nextStrafeFlip)
-            {
-                strafeSign = Random.value < 0.5f ? -1f : 1f;
-                nextStrafeFlip = Time.time + Random.Range(1.5f, 3f);
-            }
-            motor.DesiredVelocity = radial + (attacking ? Vector3.zero : tangent);
-
-            bool inReach = distance <= reach &&
-                           Mathf.Abs(Target.transform.position.y - transform.position.y) <= combatant.maxHitHeightDifference;
-            bool facing = Vector3.Angle(transform.forward, direction) <= attackFacingAngle;
-            if (!attacking && inReach && facing && combatant.CanAct && Time.time >= nextAttackTime && TryTakeSlot())
-            {
-                if (combatant.TryAttack(direction))
-                {
-                    attacking = true;
-                    nextAttackTime = Time.time + Random.Range(attackCooldownMin, attackCooldownMax);
-                }
-                else ReleaseSlot();
-            }
-        }
-
-        void MoveTowards(Vector3 destination, float speed)
-        {
-            Vector3 direction = destination - transform.position;
-            direction.y = 0f;
-            motor.DesiredVelocity = direction.sqrMagnitude > 0.01f ? direction.normalized * speed : Vector3.zero;
-        }
-
-        /// <summary>Hop up ledges the CharacterController can't step onto.</summary>
-        void JumpIfStuck(float dt)
-        {
-            bool wantsToMove = motor.DesiredVelocity.sqrMagnitude > 1f;
-            Vector3 actual = motor.ActualVelocity;
-            bool barelyMoving = new Vector2(actual.x, actual.z).sqrMagnitude < 0.2f;
-            stuckTime = wantsToMove && barelyMoving && motor.IsGrounded ? stuckTime + dt : 0f;
-            if (stuckTime > 0.25f)
-            {
-                motor.RequestJump();
-                stuckTime = 0f;
-            }
-        }
-
-        bool SlotFree() => Target != null && (!AttackSlots.TryGetValue(Target, out GoblinAI holder) || holder == null);
-        bool HoldsSlot() => Target != null && AttackSlots.TryGetValue(Target, out GoblinAI holder) && holder == this;
-
-        bool TryTakeSlot()
-        {
-            if (HoldsSlot()) return true;
-            if (!SlotFree()) return false;
-            AttackSlots[Target] = this;
-            return true;
-        }
-
-        void ReleaseSlot()
-        {
-            if (HoldsSlot()) AttackSlots.Remove(Target);
-        }
-
-        static float FlatDistance(Vector3 a, Vector3 b)
-        {
-            a.y = b.y = 0f;
-            return Vector3.Distance(a, b);
+            if (Steering.FlatDistance(transform.position, MarchTarget) > 2f) steering.MoveTowards(MarchTarget, Gait.Run);
+            else steering.Stop();
         }
     }
 }
