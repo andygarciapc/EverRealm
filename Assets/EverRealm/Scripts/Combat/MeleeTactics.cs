@@ -6,7 +6,8 @@ namespace EverRealm.Combat
 {
     /// <summary>
     /// How an AI fights one target in melee, shared by every brain that fights: chases, keeps spacing at its
-    /// weapon's reach and swings when it holds one of the target's attack slots (two attackers per target). Reacts to
+    /// weapon's reach and swings when it holds one of the target's attack slots (two attackers per target), still
+    /// moving through the swing: it steps in, and follows the target until late in the wind-up. Reacts to
     /// a target's wind-up by blocking or dodging, sometimes feints its own swings, and respects its stamina.
     /// The brain picks the target and calls <see cref="Tick"/> every frame; this only uses the commands any
     /// brain has.
@@ -30,6 +31,10 @@ namespace EverRealm.Combat
         public float attackCooldownMax = 2.2f;
         [Tooltip("Only swings when the target is within this many degrees of its facing.")]
         public float attackFacingAngle = 35f;
+        [Tooltip("Preferred distance during a wind-up and strike, as a fraction of weapon reach, so swings step into the target.")]
+        public float swingSpacingFactor = 0.55f;
+        [Tooltip("Fraction of the wind-up spent turning after the target. The aim is committed after that, so a late dodge still beats the swing.")]
+        [Range(0f, 1f)] public float windupTrackFraction = 0.6f;
 
         [Header("Reactions to an enemy wind-up")]
         [Range(0f, 1f)] public float blockChance = 0.4f;
@@ -117,6 +122,7 @@ namespace EverRealm.Combat
             {
                 if (InFightRange) Fight();
                 else Chase();
+                AimAtTarget();
             }
             UpdateDefence();
             UpdateFeint();
@@ -139,11 +145,12 @@ namespace EverRealm.Combat
             float distance = toTarget.magnitude;
             Vector3 direction = distance > 0.001f ? toTarget / distance : transform.forward;
             motor.Gait = Gait.Run;
-            motor.FaceTowards(direction, faceTurnSpeed);
+            if (!attacking) motor.FaceTowards(direction, faceTurnSpeed); // A swing turns the body itself, along its aim.
 
             bool hasSlot = HoldsSlot();
             float reach = combatant.Weapon.reach + Target.Motor.Radius;
-            float preferred = reach * spacingFactor + (hasSlot || SlotFree() ? 0f : waitingDistance);
+            bool steppingIn = attacking && combatant.State is CombatState.Windup or CombatState.Active;
+            float preferred = reach * (steppingIn ? swingSpacingFactor : spacingFactor) + (hasSlot || SlotFree() ? 0f : waitingDistance);
 
             // Close or open the gap toward the preferred spacing, and circle a little while waiting.
             if (Time.time >= nextStrafeFlip)
@@ -153,10 +160,9 @@ namespace EverRealm.Combat
             }
             Vector3 radial = direction * Mathf.Clamp(distance - preferred, -1f, 1f);
             Vector3 tangent = Vector3.Cross(Vector3.up, direction) * (strafeSign * strafeFraction);
-            motor.MoveIntent = radial + (attacking || holdingBlock ? Vector3.zero : tangent);
+            motor.MoveIntent = radial + (holdingBlock ? Vector3.zero : tangent);
 
-            bool inReach = distance <= reach &&
-                           Mathf.Abs(Target.transform.position.y - transform.position.y) <= combatant.maxHitHeightDifference;
+            bool inReach = combatant.CouldHit(Target, direction);
             bool facing = Vector3.Angle(transform.forward, direction) <= attackFacingAngle;
             bool affordable = combatant.Stamina.Current >= combatant.Weapon.staminaCost;
             if (!attacking && !holdingBlock && inReach && facing && affordable && combatant.CanAct
@@ -167,10 +173,21 @@ namespace EverRealm.Combat
                     attacking = true;
                     nextAttackTime = Time.time + Random.Range(attackCooldownMin, attackCooldownMax);
                     if (Random.value < feintChance)
-                        feintAt = Time.time + Random.Range(0.2f, 0.85f) * combatant.Weapon.windup;
+                        feintAt = Time.time + Random.Range(0.2f, 0.85f) * combatant.CurrentAttack.windup;
                 }
                 else ReleaseSlot();
             }
+        }
+
+        /// <summary>Follows the target, in direction and height, until late in a wind-up. After that the swing is committed.</summary>
+        void AimAtTarget()
+        {
+            if (attacking)
+            {
+                if (combatant.State != CombatState.Windup || combatant.StateTime > combatant.CurrentAttack.windup * windupTrackFraction) return;
+                combatant.SetAim(FlatDirectionTo(Target.transform.position));
+            }
+            combatant.SetAimPitch(CombatRules.PitchOf(Target.transform.position - transform.position));
         }
 
         // ---- Defence and feints ----
@@ -229,7 +246,7 @@ namespace EverRealm.Combat
             if (reaction != Reaction.Block) return 0f;
             if (Random.value >= parryAttemptChance) return Random.Range(blockReactionMin, blockReactionMax);
             // Parry attempt: aim to raise the guard just before the swing begins. Too early is a plain block.
-            float untilSwing = Mathf.Max(0f, Target.Weapon.windup - Target.StateTime);
+            float untilSwing = Mathf.Max(0f, Target.CurrentAttack.windup - Target.StateTime);
             return Mathf.Max(0f, untilSwing - Random.Range(0f, parryTimingSpread));
         }
 

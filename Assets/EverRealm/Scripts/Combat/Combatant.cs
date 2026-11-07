@@ -35,7 +35,6 @@ namespace EverRealm.Combat
         public float blockTurnSpeed = 540f;
 
         [Header("Staggers (seconds)")]
-        public float hitStagger = 0.35f;
         public float guardBreakStagger = 0.9f;
         [Tooltip("Applied to the attacker when its swing is parried.")]
         public float parryStagger = 1f;
@@ -44,6 +43,13 @@ namespace EverRealm.Combat
 
         [Header("Movement while acting")]
         public float attackMoveMultiplier = 0.2f;
+
+        [Tooltip("Furthest a swing or guard can be aimed above or below level, in degrees.")]
+        public float maxAimPitch = 50f;
+
+        [Header("Input")]
+        [Tooltip("How long a queued attack or dodge waits for the body to be free, in seconds.")]
+        public float inputBuffer = 0.2f;
 
         [Header("Dodge")]
         public WeightClass weightClass = WeightClass.Light;
@@ -54,22 +60,28 @@ namespace EverRealm.Combat
 
         [Header("Hit detection")]
         public LayerMask hitMask = ~0;
-        [Tooltip("Swings can't reach targets standing more than this far above or below, in metres.")]
-        public float maxHitHeightDifference = 1.5f;
+        [Tooltip("Where a swing starts, as a fraction of body height.")]
+        public float swingOriginHeight = 0.65f;
 
         static readonly Collider[] OverlapBuffer = new Collider[32];
         readonly HashSet<Combatant> hitThisSwing = new HashSet<Combatant>();
 
         float clock, stateDuration;
-        bool blockHeld;
+        bool blockHeld, attackHeld;
         float blockPressedClock = float.NegativeInfinity;
         Vector3 aimDirection, blockFacing;
+        BufferedIntent queuedAttack, queuedDodge;
+        AttackChain chain;
 
         public CharacterMotor Motor { get; private set; }
         public LocalTime LocalTime { get; private set; }
         public Stamina Stamina { get; private set; }
         public Agent Agent { get; private set; }
         public WeaponData Weapon => weapon;
+        /// <summary>The attack being made, or the last one made.</summary>
+        public WeaponAttack CurrentAttack { get; private set; }
+        /// <summary>Reach of the current attack.</summary>
+        float SwingReach => weapon.reach + CurrentAttack.reachBonus;
         public CombatState State { get; private set; }
         /// <summary>Local seconds spent in the current state.</summary>
         public float StateTime { get; private set; }
@@ -105,15 +117,42 @@ namespace EverRealm.Combat
 
         // ---- Commands ----
 
+        /// <summary>Starts a swing if the body is free. Remembers nothing if it isn't.</summary>
         public bool TryAttack(Vector3 aim)
         {
-            if (!CanAct || weapon == null || Stamina.IsEmpty) return false;
+            if (!CanAct || weapon == null || weapon.attacks.Length == 0 || Stamina.Current < weapon.staminaCost) return false;
+            queuedAttack.Clear();
             aim.y = 0f;
             aimDirection = aim.sqrMagnitude > 0.0001f ? aim.normalized : transform.forward;
             hitThisSwing.Clear();
-            Enter(CombatState.Windup, weapon.windup);
+            CurrentAttack = weapon.attacks[chain.Next(weapon.attacks.Length, clock, weapon.comboResetSeconds)];
+            Enter(CombatState.Windup, CurrentAttack.windup);
             return true;
         }
+
+        /// <summary>For a single press: starts a swing, or else remembers it briefly, replacing any it already remembered.</summary>
+        public void QueueAttack(Vector3 aim)
+        {
+            if (!TryAttack(aim) && !IsDead) queuedAttack.Store(aim, clock + inputBuffer);
+        }
+
+        /// <summary>
+        /// Call every frame with whether attack is held: the body swings again the moment it's free, along the
+        /// aim from <see cref="SetAim"/>. Nothing is remembered, so letting go stops after the current swing.
+        /// </summary>
+        public void SetAttackHeld(bool held) => attackHeld = held;
+
+        /// <summary>Steers the current swing. Brains that don't call this commit to their aim when the swing starts.</summary>
+        public void SetAim(Vector3 aim)
+        {
+            aim.y = 0f;
+            if (aim.sqrMagnitude > 0.0001f) aimDirection = aim.normalized;
+        }
+
+        /// <summary>How high swings and the guard are aimed, in degrees above level. Swings land along this, and the pose bends to match.</summary>
+        public float AimPitch { get; private set; }
+
+        public void SetAimPitch(float degrees) => AimPitch = Mathf.Clamp(degrees, -maxAimPitch, maxAimPitch);
 
         /// <summary>Call every frame with the block intent and the direction the guard should face.</summary>
         public void SetBlocking(bool held, Vector3 facing)
@@ -126,7 +165,9 @@ namespace EverRealm.Combat
 
         public bool TryDodge(Vector3 direction)
         {
-            if (!(CanAct || IsFeintable) || Stamina.IsEmpty) return false;
+            if (!CombatRules.CanDodgeFrom(State) || Stamina.IsEmpty) return false;
+            queuedAttack.Clear();
+            queuedDodge.Clear();
             if (IsFeintable) Stamina.Spend(weapon.feintStaminaCost);
             direction.y = 0f;
             DodgeDirection = direction.sqrMagnitude > 0.0001f ? direction.normalized : -transform.forward;
@@ -134,6 +175,12 @@ namespace EverRealm.Combat
             Stamina.Spend(CurrentDodge.staminaCost);
             Enter(CombatState.Dodging, CurrentDodge.TotalTime);
             return true;
+        }
+
+        /// <summary>For a single press: dodges, or else remembers it briefly, replacing any it already remembered.</summary>
+        public void QueueDodge(Vector3 direction)
+        {
+            if (!TryDodge(direction) && !IsDead) queuedDodge.Store(direction, clock + inputBuffer);
         }
 
         // ---- Update ----
@@ -160,13 +207,14 @@ namespace EverRealm.Combat
                     if (StateTime >= stateDuration)
                     {
                         Stamina.Spend(weapon.staminaCost); // The swing is now committed.
-                        Enter(CombatState.Active, weapon.active);
+                        chain.Commit(weapon.attacks.Length, clock);
+                        Advance(CombatState.Active, CurrentAttack.active);
                     }
                     break;
                 case CombatState.Active:
                     Motor.FaceTowards(aimDirection, weapon.attackTurnSpeed);
                     SwingHitTest();
-                    if (State == CombatState.Active && StateTime >= stateDuration) Enter(CombatState.Recovery, weapon.recovery);
+                    if (State == CombatState.Active && StateTime >= stateDuration) Advance(CombatState.Recovery, CurrentAttack.recovery);
                     break;
                 case CombatState.Recovery:
                     Motor.FaceTowards(aimDirection, weapon.attackTurnSpeed);
@@ -183,6 +231,11 @@ namespace EverRealm.Combat
                     HoldFacing();
                     break;
             }
+
+            if (CombatRules.CanDodgeFrom(State) && queuedDodge.TryTake(clock, out Vector3 dodge)) TryDodge(dodge);
+            // Before anything reads the state this frame, so back-to-back swings have no idle gap between them.
+            if (CanAct && queuedAttack.TryTake(clock, out Vector3 aim)) TryAttack(aim);
+            if (CanAct && attackHeld) TryAttack(aimDirection);
 
             Motor.Restriction = CurrentRestriction();
         }
@@ -222,9 +275,17 @@ namespace EverRealm.Combat
         {
             CombatState.Idle => MovementRestriction.None,
             CombatState.Blocking => new MovementRestriction { SpeedMultiplier = blockMoveMultiplier },
-            CombatState.Windup or CombatState.Active or CombatState.Recovery => new MovementRestriction { SpeedMultiplier = attackMoveMultiplier },
+            CombatState.Windup or CombatState.Active or CombatState.Recovery => new MovementRestriction { SpeedMultiplier = attackMoveMultiplier, AllowJump = true },
             _ => new MovementRestriction { SpeedMultiplier = 0f },
         };
+
+        /// <summary>Moves to the next phase of a swing, keeping the time overrun, so its length doesn't depend on the frame rate.</summary>
+        void Advance(CombatState state, float duration)
+        {
+            float overrun = StateTime - stateDuration;
+            Enter(state, duration);
+            StateTime = overrun;
+        }
 
         void Enter(CombatState state, float duration = 0f)
         {
@@ -239,19 +300,26 @@ namespace EverRealm.Combat
         void SwingHitTest()
         {
             Vector3 center = transform.position + Vector3.up;
-            int count = Physics.OverlapSphereNonAlloc(center, weapon.reach + 1f, OverlapBuffer, hitMask, QueryTriggerInteraction.Ignore);
+            int count = Physics.OverlapSphereNonAlloc(center, SwingReach + 1f, OverlapBuffer, hitMask, QueryTriggerInteraction.Ignore);
             for (int i = 0; i < count; i++)
             {
                 var target = OverlapBuffer[i].GetComponentInParent<Combatant>();
                 if (target == null || target == this || target.IsDead || hitThisSwing.Contains(target)) continue;
                 if (!Agent.IsHostileTo(target.Agent)) continue;
-                if (!CombatRules.SwingReaches(transform.position, transform.forward, target.transform.position,
-                                              target.Motor.Radius, weapon.reach, weapon.arc, maxHitHeightDifference)) continue;
+                if (!Reaches(target, transform.forward, CurrentAttack)) continue;
                 hitThisSwing.Add(target);
                 target.ReceiveHit(this);
                 if (State != CombatState.Active) return; // Parried mid-swing.
             }
         }
+
+        /// <summary>Whether a swing along <paramref name="facing"/> at the current aim would land on <paramref name="target"/>.</summary>
+        public bool CouldHit(Combatant target, Vector3 facing) => Reaches(target, facing, weapon.attacks[0]);
+
+        bool Reaches(Combatant target, Vector3 facing, WeaponAttack attack) =>
+            CombatRules.SwingReaches(transform.position + Vector3.up * (Motor.Height * swingOriginHeight), facing, AimPitch,
+                                     target.transform.position, target.Motor.Height, target.Motor.Radius,
+                                     weapon.reach + attack.reachBonus, attack.arc, attack.heightArc);
 
         void ReceiveHit(Combatant attacker)
         {
@@ -289,10 +357,10 @@ namespace EverRealm.Combat
                     Stagger(guardBreakStagger);
                     break;
                 case HitResult.Damaged:
-                    Health = Mathf.Max(0f, Health - attackWeapon.damage);
+                    Health = Mathf.Max(0f, Health - attackWeapon.damage * attacker.CurrentAttack.damageMultiplier);
                     Motor.AddImpulse(knockback);
                     if (Health <= 0f) Die();
-                    else Stagger(hitStagger);
+                    else if (attackWeapon.hitStagger > 0f) Stagger(attackWeapon.hitStagger);
                     break;
                 default:
                     hitStop = 0f;
@@ -318,6 +386,9 @@ namespace EverRealm.Combat
         void Die()
         {
             Enter(CombatState.Dead);
+            queuedAttack.Clear();
+            queuedDodge.Clear();
+            attackHeld = false;
             blockHeld = false;
             Motor.MoveIntent = Vector3.zero;
             Motor.SetCollidesWithAgents(false);

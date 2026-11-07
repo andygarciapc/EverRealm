@@ -39,6 +39,14 @@ namespace EverRealm.World
         public Color nightEquator = new Color(0.10f, 0.12f, 0.20f);
         public Color nightGround = new Color(0.05f, 0.05f, 0.08f);
 
+        [Header("Distance haze")]
+        [Tooltip("Haze begins this far from the viewer, in metres. Fog itself is switched on in the scene's lighting settings.")]
+        public float hazeStart = 140f;
+        [Tooltip("Nothing shows through the haze beyond this distance, so other places are found, not seen.")]
+        public float hazeEnd = 420f;
+        public Color dayHaze = new Color(0.72f, 0.79f, 0.87f);
+        public Color nightHaze = new Color(0.05f, 0.06f, 0.11f);
+
         [Header("Debug")]
         public float skipHours = 2f;
 
@@ -52,6 +60,10 @@ namespace EverRealm.World
         public int Day => (int)(TotalHours / 24.0) + 1;
         public DayPhase Phase => PhaseAt(Hour, dayStartHour, eveningStartHour, nightStartHour);
         public bool IsNight => Phase == DayPhase.Night;
+        /// <summary>Dawns since the start of the world; changes by one at each <see cref="dayStartHour"/>.</summary>
+        public int Dawns => DawnsBy(TotalHours, dayStartHour);
+
+        public static int DawnsBy(double totalHours, float dayStartHour) => (int)System.Math.Floor((totalHours - dayStartHour) / 24.0);
 
         public static float HoursPerSecond(float dayLengthMinutes) => 24f / (dayLengthMinutes * 60f);
 
@@ -74,6 +86,8 @@ namespace EverRealm.World
                 RenderSettings.sun = sun;
             }
             RenderSettings.ambientMode = AmbientMode.Trilight;
+            RenderSettings.fogStartDistance = hazeStart;
+            RenderSettings.fogEndDistance = hazeEnd;
             ApplyLighting();
         }
 
@@ -114,6 +128,7 @@ namespace EverRealm.World
             RenderSettings.ambientSkyColor = Color.Lerp(nightSky, daySky, daylight);
             RenderSettings.ambientEquatorColor = Color.Lerp(nightEquator, dayEquator, daylight);
             RenderSettings.ambientGroundColor = Color.Lerp(nightGround, dayGround, daylight);
+            RenderSettings.fogColor = Color.Lerp(nightHaze, dayHaze, daylight);
         }
     }
 }

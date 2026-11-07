@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using EverRealm.Characters;
 using EverRealm.World;
@@ -5,23 +6,16 @@ using UnityEngine;
 
 namespace EverRealm.Settlements
 {
-    public enum HamletState { Living, Fallen, Ruin }
-
     /// <summary>
-    /// Fills the hamlet with villagers after every generation: a few per house, a seeded mix of militia and
-    /// civilians, each with a home, a bed, a work spot and its own resolve. Also takes in newcomers (the
-    /// bodies the player starts in) as residents, so a body the player lets go of carries on living there.
-    /// <para>
-    /// PROVISIONAL (M3 placeholder, to be replaced once parties travel a larger map): settlers appear on their
-    /// own every so often while the hamlet lives and has free beds, and when everyone is dead a single roll
-    /// decides whether a colonization party comes or the hamlet stays a ruin.
-    /// </para>
+    /// The island's hamlets and the people in them. Fills each hamlet after every generation: a few villagers
+    /// per house, a seeded mix of militia and civilians, each with a home, a bed, a work spot and its own
+    /// resolve. Watches over each hamlet's fortunes: asks who is left when an attack ends and sends the
+    /// survivors away at dawn if nobody is. Also takes in the bodies the player starts in as residents, so a
+    /// body the player lets go of carries on living there. Runs the same whether or not anyone is watching.
     /// </summary>
+    [DefaultExecutionOrder(-10)] // Fills the hamlets before anyone's Start asks about them.
     public sealed class HamletPopulation : MonoBehaviour
     {
-        /// <summary>Sleeping spots per house (see <see cref="House.SleepingSpot"/>).</summary>
-        public const int BedsPerHouse = 3;
-
         [SerializeField] WorldBuilder world;
         [SerializeField] WorldClock clock;
         [Tooltip("A human body with a (disabled) VillagerAI brain.")]
@@ -30,6 +24,8 @@ namespace EverRealm.Settlements
         public int minPerHouse = 1;
         public int maxPerHouse = 2;
         [Range(0f, 1f)] public float militiaFraction = 0.4f;
+        [Tooltip("Every hamlet starts with at least this many militia, so its first raid is a fight.")]
+        public int minStartingMilitia = 2;
 
         [Header("Resolve")]
         [Tooltip("Chance a villager never breaks and fights to the death.")]
@@ -40,69 +36,23 @@ namespace EverRealm.Settlements
         [Tooltip("Chance a civilian turns and fights when a hostile corners it.")]
         [Range(0f, 1f)] public float cornerFightChance = 0.25f;
 
-        [Header("Settlers (provisional)")]
-        [Tooltip("In-game hours between settler arrivals, while the hamlet lives and has a free bed.")]
-        public float settlerIntervalHours = 36f;
-        public float settlerIntervalJitter = 12f;
-        public int minSettlers = 1;
-        public int maxSettlers = 2;
-        [Tooltip("Settlers and colonists appear this far from the square and walk in.")]
-        public float arrivalDistance = 70f;
-        [Tooltip("Newcomers avoid arriving with a hostile within this distance.")]
-        public float arrivalClearance = 30f;
-
-        [Header("Recolonization (provisional)")]
-        [Tooltip("Rolled once when the last resident dies: colonists come, or the hamlet stays a ruin.")]
-        [Range(0f, 1f)] public float recolonizeChance = 0.5f;
+        [Header("Resettling")]
+        [Tooltip("An emptied hamlet is due colonists this many days later, even if nobody survived to carry the news (provisional).")]
         public float minColonizeDays = 2f;
         public float maxColonizeDays = 4f;
-        public int minColonists = 3;
-        public int maxColonists = 5;
 
+        readonly List<Hamlet> hamlets = new List<Hamlet>();
         readonly List<VillagerAI> spawned = new List<VillagerAI>();
         readonly List<VillagerAI> adopted = new List<VillagerAI>();
-        readonly Dictionary<VillagerAI, (House house, int spot)> beds = new Dictionary<VillagerAI, (House, int)>();
         System.Random rng;
-        double nextSettlersAt, colonistsAt;
-        int arrivals;
+        int arrivals, lastDawn;
 
-        public HamletState State { get; private set; }
-        public double HoursUntilSettlers => nextSettlersAt - clock.TotalHours;
-        public double HoursUntilColonists => colonistsAt - clock.TotalHours;
+        public IReadOnlyList<Hamlet> Hamlets => hamlets;
 
-        public int FreeBeds
-        {
-            get
-            {
-                Settlement settlement = world.Settlement;
-                if (settlement == null) return 0;
-                int taken = 0;
-                foreach (KeyValuePair<VillagerAI, (House house, int spot)> bed in beds)
-                    if (bed.Key != null && bed.Key.IsAlive) taken++;
-                return settlement.Houses.Count * BedsPerHouse - taken;
-            }
-        }
-
-        public int CountAlive(Temperament temperament)
-        {
-            int count = 0;
-            foreach (VillagerAI villager in Residents())
-                if (villager.IsAlive && villager.Temperament == temperament) count++;
-            return count;
-        }
-
-        public int CountAlive() => CountAlive(Temperament.Militia) + CountAlive(Temperament.Civilian);
-
-        IEnumerable<VillagerAI> Residents()
-        {
-            foreach (VillagerAI villager in spawned)
-                if (villager != null) yield return villager;
-            foreach (VillagerAI villager in adopted)
-                if (villager != null) yield return villager;
-        }
-
-        // Newcomers can be adopted before Start populates the hamlet.
-        void Awake() => rng = new System.Random(world.Settings.seed * 13 + 5);
+        /// <summary>Raised after every (re)population, once every hamlet has its people.</summary>
+        public event Action Populated;
+        /// <summary>A hamlet's survivors have been told to go; they no longer live there.</summary>
+        public event Action<Hamlet, List<VillagerAI>> Abandoned;
 
         void OnEnable() => world.Generated += Populate;
         void OnDisable() => world.Generated -= Populate;
@@ -115,137 +65,119 @@ namespace EverRealm.Settlements
             foreach (VillagerAI villager in spawned)
                 if (villager != null) Destroy(villager.gameObject);
             spawned.Clear();
-            beds.Clear();
+            hamlets.Clear();
             arrivals = 0;
             rng = new System.Random(world.Settings.seed * 13 + 5);
-            State = HamletState.Living;
-            ScheduleSettlers();
+            lastDawn = clock.Dawns;
 
-            Settlement settlement = world.Settlement;
-            ReadoptNewcomers(settlement);
-            if (settlement == null || settlement.Houses.Count == 0) return;
-
-            for (int h = 0; h < settlement.Houses.Count; h++)
+            foreach (Settlement settlement in world.Settlements)
             {
-                House house = settlement.Houses[h];
-                int count = rng.Next(minPerHouse, maxPerHouse + 1);
-                for (int i = 0; i < count; i++)
+                var hamlet = new Hamlet(settlement);
+                hamlet.StateChanged += OnStateChanged;
+                hamlets.Add(hamlet);
+            }
+            ReadoptNewcomers();
+            foreach (Hamlet hamlet in hamlets)
+            {
+                foreach (House house in hamlet.Settlement.Houses)
                 {
-                    if (!TryClaimBed(house, out int spot)) break;
-                    SpawnResident("Villager", RollTemperament(), house, spot, house.SleepingSpot(spot));
+                    int count = rng.Next(minPerHouse, maxPerHouse + 1);
+                    for (int i = 0; i < count && hamlet.FreeBeds > 0; i++)
+                    {
+                        Temperament temperament = hamlet.LivingFighters < minStartingMilitia ? Temperament.Militia : RollTemperament();
+                        VillagerAI villager = SpawnPerson("Villager", temperament, house.Inside);
+                        Settle(villager, hamlet);
+                        villager.GetComponent<CharacterMotor>().Teleport(villager.Bed + Vector3.up * 0.1f);
+                    }
                 }
             }
+            Populated?.Invoke();
         }
 
         void Update()
         {
-            if (world.Settlement == null) return;
-            bool anyoneAlive = CountAlive() > 0;
-            switch (State)
-            {
-                case HamletState.Living:
-                    if (!anyoneAlive)
-                    {
-                        Fall();
-                        break;
-                    }
-                    if (clock.TotalHours < nextSettlersAt) break;
-                    if (FreeBeds > 0) Arrive("Settler", rng.Next(minSettlers, maxSettlers + 1), forceMilitia: false);
-                    ScheduleSettlers();
-                    break;
-                case HamletState.Fallen:
-                    if (anyoneAlive) Revive();
-                    else if (clock.TotalHours >= colonistsAt)
-                    {
-                        Arrive("Colonist", rng.Next(minColonists, maxColonists + 1), forceMilitia: true);
-                        Revive();
-                    }
-                    break;
-                case HamletState.Ruin:
-                    if (anyoneAlive) Revive(); // Someone (a newcomer body) moved in after all.
-                    break;
-            }
+            float radius = villagerPrefab.defendRadius;
+            foreach (Hamlet hamlet in hamlets) hamlet.Review(radius);
+
+            if (clock.Dawns == lastDawn) return;
+            lastDawn = clock.Dawns;
+            foreach (Hamlet hamlet in hamlets)
+                if (hamlet.ReviewAtDawn(FightersPresent(hamlet))) SendAway(hamlet);
         }
 
-        // ---- Provisional: settlers and recolonization ----
-
-        void ScheduleSettlers() =>
-            nextSettlersAt = clock.TotalHours + settlerIntervalHours + (rng.NextDouble() * 2 - 1) * settlerIntervalJitter;
-
-        /// <summary>The last resident died: one roll decides between colonists and ruin.</summary>
-        void Fall()
+        void OnStateChanged(Hamlet hamlet, HamletState previous)
         {
-            if (rng.NextDouble() < recolonizeChance)
-            {
-                State = HamletState.Fallen;
-                colonistsAt = clock.TotalHours + 24.0 * (minColonizeDays + rng.NextDouble() * (maxColonizeDays - minColonizeDays));
-                Debug.Log($"[EverRealm] The hamlet has fallen. Colonists will come in {HoursUntilColonists:F0} h.");
-            }
-            else
-            {
-                State = HamletState.Ruin;
-                Debug.Log("[EverRealm] The hamlet has fallen and will stay a ruin.");
-            }
+            if (hamlet.State == HamletState.Empty)
+                hamlet.ColonistsDueAt = clock.TotalHours + 24.0 * (minColonizeDays + rng.NextDouble() * (maxColonizeDays - minColonizeDays));
+            Debug.Log($"[EverRealm] {hamlet.Name}: {previous} -> {hamlet.State} ({hamlet.LivingResidents} residents, {hamlet.LivingFighters} fighters)");
         }
 
-        void Revive()
+        // ---- Attacks and abandonment ----
+
+        /// <summary>Armed, unbroken allies standing in <paramref name="hamlet"/> right now, resident or not.</summary>
+        public int FightersPresent(Hamlet hamlet) => hamlet.CountFightersPresent(AlliesOnTheIsland(), villagerPrefab.defendRadius);
+
+        /// <summary>Everyone alive, counted from the bodies themselves rather than from any record of them.</summary>
+        public int CountAlive()
         {
-            State = HamletState.Living;
-            ScheduleSettlers();
+            int count = 0;
+            foreach (IPerson person in AlliesOnTheIsland())
+                if (person.IsAlive) count++;
+            return count;
         }
 
-        /// <summary>Newcomers appear out on the land and walk in to their new homes.</summary>
-        void Arrive(string kind, int count, bool forceMilitia)
+        IEnumerable<IPerson> AlliesOnTheIsland()
         {
-            Settlement settlement = world.Settlement;
-            Vector3 origin = ArrivalPoint(settlement);
-            int arrived = 0;
-            for (int i = 0; i < count; i++)
+            Agent ally = villagerPrefab.GetComponent<Agent>();
+            foreach (Agent agent in AgentDirectory.All)
+                if (ally.IsAlliedWith(agent) && agent.TryGetComponent(out VillagerAI villager)) yield return villager;
+        }
+
+        /// <summary>Leaving is an order to the residents, so a body the player controls stays put and keeps its home.</summary>
+        void SendAway(Hamlet hamlet)
+        {
+            var leaving = new List<VillagerAI>();
+            foreach (IPerson resident in hamlet.Residents())
             {
-                if (!TryClaimAnyBed(settlement, out House house, out int spot)) break;
-                Temperament temperament = forceMilitia && i == 0 ? Temperament.Militia : RollTemperament();
-                VillagerAI villager = SpawnResident(kind, temperament, house, spot, house.SleepingSpot(spot));
-                Vector2 offset = Random.insideUnitCircle * 2f;
-                villager.GetComponent<CharacterMotor>().Teleport(origin + new Vector3(offset.x, 0.1f, offset.y));
-                arrived++;
+                var villager = (VillagerAI)resident;
+                if (!villager.enabled) continue;
+                hamlet.MoveOut(villager);
+                leaving.Add(villager);
             }
-            if (arrived > 0) Debug.Log($"[EverRealm] {arrived} {kind.ToLowerInvariant()}{(arrived == 1 ? "" : "s")} arriving at the hamlet");
+            Debug.Log($"[EverRealm] {leaving.Count} survivors leave {hamlet.Name}");
+            Abandoned?.Invoke(hamlet, leaving);
         }
 
-        /// <summary>On land <see cref="arrivalDistance"/> out, preferring a direction with no hostiles (goblin camps) nearby.</summary>
-        Vector3 ArrivalPoint(Settlement settlement)
-        {
-            Agent newcomer = villagerPrefab.GetComponent<Agent>();
-            double start = rng.NextDouble() * Mathf.PI * 2;
-            Vector3? fallback = null;
-            for (int step = 0; step < 12; step++)
-            {
-                double angle = start + step * Mathf.PI / 6;
-                Vector3 point = settlement.Square + new Vector3((float)System.Math.Cos(angle), 0f, (float)System.Math.Sin(angle)) * arrivalDistance;
-                if (!world.TryGetLandSurface(point.x, point.z, out Vector3 surface)) continue;
-                if (AgentDirectory.FindNearest(surface, arrivalClearance, a => a.IsAlive && newcomer.IsHostileTo(a)) == null) return surface;
-                fallback ??= surface;
-            }
-            return fallback ?? settlement.Square;
-        }
+        // ---- People ----
 
-        // ---- Residents ----
-
-        VillagerAI SpawnResident(string kind, Temperament temperament, House house, int spot, Vector3 bed)
+        /// <summary>Makes a new body with no home yet, standing at <paramref name="position"/>.</summary>
+        public VillagerAI SpawnPerson(string kind, Temperament temperament, Vector3 position)
         {
-            Settlement settlement = world.Settlement;
-            VillagerAI villager = Instantiate(villagerPrefab, bed + Vector3.up * 0.1f, Quaternion.identity, transform);
+            VillagerAI villager = Instantiate(villagerPrefab, position + Vector3.up * 0.1f, Quaternion.identity, transform);
             villager.name = $"{kind} {++arrivals} ({temperament})";
             (float breakAt, bool cornerFight) = RollResolve(temperament);
-            villager.Assign(clock, settlement, house, bed, WorkSpot(settlement, HouseIndex(settlement, house) + spot),
-                            temperament, breakAt, cornerFight);
-            beds[villager] = (house, spot);
+            villager.Assign(clock, null, null, position, position, temperament, breakAt, cornerFight);
             villager.enabled = true;
             spawned.Add(villager);
             return villager;
         }
 
-        Temperament RollTemperament() => rng.NextDouble() < militiaFraction ? Temperament.Militia : Temperament.Civilian;
+        /// <summary>Gives <paramref name="villager"/> a free bed in <paramref name="hamlet"/>. False if there is none.</summary>
+        public bool Settle(VillagerAI villager, Hamlet hamlet)
+        {
+            if (!hamlet.TryTakeBed(villager, out House house, out int spot)) return false;
+            GiveHome(villager, hamlet, house, spot);
+            return true;
+        }
+
+        /// <summary>Sets <paramref name="villager"/> up in a bed it has already taken.</summary>
+        public void GiveHome(VillagerAI villager, Hamlet hamlet, House house, int spot)
+        {
+            Settlement settlement = hamlet.Settlement;
+            villager.MoveInto(settlement, house, house.SleepingSpot(spot), WorkSpot(settlement, HouseIndex(settlement, house) + spot));
+        }
+
+        public Temperament RollTemperament() => rng.NextDouble() < militiaFraction ? Temperament.Militia : Temperament.Civilian;
 
         (float breakHealthFraction, bool fightsWhenCornered) RollResolve(Temperament temperament)
         {
@@ -256,88 +188,35 @@ namespace EverRealm.Settlements
         }
 
         /// <summary>
-        /// Makes <paramref name="body"/> a resident (militia, since newcomers carry a sword) without
-        /// switching its brain on; whoever controls the body decides that.
+        /// Makes <paramref name="body"/> a resident of the first hamlet (militia, since newcomers carry a sword)
+        /// without switching its brain on; whoever controls the body decides that.
         /// </summary>
         public void Adopt(VillagerAI body)
         {
             if (!adopted.Contains(body)) adopted.Add(body);
-            AssignNewcomer(body, world.Settlement);
+            AssignNewcomer(body);
         }
 
         /// <summary>After a regeneration, newcomers get homes in the new hamlet; those living on their own move in.</summary>
-        void ReadoptNewcomers(Settlement settlement)
+        void ReadoptNewcomers()
         {
             adopted.RemoveAll(v => v == null || !v.IsAlive);
             foreach (VillagerAI body in adopted)
             {
-                AssignNewcomer(body, settlement);
+                AssignNewcomer(body);
                 if (!body.enabled || body.Home == null) continue;
                 body.GetComponent<CharacterMotor>().Teleport(body.Home.Inside + Vector3.up * 0.1f);
                 if (body.TryGetComponent(out OceanRescue rescue)) rescue.ResetSafePosition();
             }
         }
 
-        void AssignNewcomer(VillagerAI body, Settlement settlement)
+        void AssignNewcomer(VillagerAI body)
         {
-            beds.Remove(body);
+            foreach (Hamlet other in hamlets) other.MoveOut(body);
             (float breakAt, bool cornerFight) = RollResolve(Temperament.Militia);
-            if (settlement == null || settlement.Houses.Count == 0)
-            {
-                body.Assign(clock, null, null, body.transform.position, body.transform.position, Temperament.Militia, breakAt, cornerFight);
-                return;
-            }
-            // A full hamlet still takes them in: they share the least crowded house's first spot.
-            if (!TryClaimAnyBed(settlement, out House house, out int spot))
-            {
-                house = LeastCrowded(settlement);
-                spot = 0;
-            }
-            body.Assign(clock, settlement, house, house.SleepingSpot(spot), WorkSpot(settlement, HouseIndex(settlement, house) + spot),
-                        Temperament.Militia, breakAt, cornerFight);
-            beds[body] = (house, spot);
-        }
-
-        // ---- Beds ----
-
-        bool TryClaimAnyBed(Settlement settlement, out House house, out int spot)
-        {
-            house = LeastCrowded(settlement);
-            spot = -1;
-            return house != null && TryClaimBed(house, out spot);
-        }
-
-        /// <summary>The lowest sleeping spot in <paramref name="house"/> no living resident uses.</summary>
-        bool TryClaimBed(House house, out int spot)
-        {
-            for (spot = 0; spot < BedsPerHouse; spot++)
-                if (!IsTaken(house, spot)) return true;
-            return false;
-        }
-
-        bool IsTaken(House house, int spot)
-        {
-            foreach (KeyValuePair<VillagerAI, (House house, int spot)> bed in beds)
-                if (bed.Key != null && bed.Key.IsAlive && bed.Value.house == house && bed.Value.spot == spot) return true;
-            return false;
-        }
-
-        House LeastCrowded(Settlement settlement)
-        {
-            House best = null;
-            int fewest = int.MaxValue;
-            foreach (House house in settlement.Houses)
-            {
-                int living = 0;
-                foreach (KeyValuePair<VillagerAI, (House house, int spot)> bed in beds)
-                    if (bed.Key != null && bed.Key.IsAlive && bed.Value.house == house) living++;
-                if (living < fewest)
-                {
-                    fewest = living;
-                    best = house;
-                }
-            }
-            return best;
+            body.Assign(clock, null, null, body.transform.position, body.transform.position, Temperament.Militia, breakAt, cornerFight);
+            if (hamlets.Count > 0 && hamlets[0].TryTakeShelter(body, out House house, out int spot))
+                GiveHome(body, hamlets[0], house, spot);
         }
 
         static int HouseIndex(Settlement settlement, House house)

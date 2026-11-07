@@ -37,6 +37,9 @@ namespace EverRealm.Player
             dodgeAction = InputSystem.actions.FindAction("Player/Dodge", true);
         }
 
+        [Tooltip("Camera pitch that counts as aiming level. The camera rests above the body looking down, so this is negative.")]
+        public float restingCameraPitch = -15f;
+
         /// <summary>Which camera defines "forward" for movement and aim.</summary>
         public void Bind(Transform viewCamera) => cameraTransform = viewCamera;
 
@@ -60,6 +63,8 @@ namespace EverRealm.Player
             // Leave the body idle when the player lets go of it.
             motor.MoveIntent = Vector3.zero;
             combatant.SetBlocking(false, transform.forward);
+            combatant.SetAttackHeld(false);
+            combatant.SetAimPitch(0f);
         }
 
         void Update()
@@ -67,7 +72,11 @@ namespace EverRealm.Player
             if (cameraTransform == null) return;
             motor.MoveIntent = MoveDirection();
             motor.Gait = sprintAction.IsPressed() ? Gait.Sprint : Gait.Run;
-            combatant.SetBlocking(blockAction.IsPressed(), CameraForward());
+            Vector3 aim = CameraForward();
+            combatant.SetBlocking(blockAction.IsPressed(), aim);
+            combatant.SetAim(aim);
+            combatant.SetAimPitch(CombatRules.PitchOf(cameraTransform.forward) - restingCameraPitch);
+            combatant.SetAttackHeld(attackAction.IsPressed());
         }
 
         Vector3 CameraForward() => Vector3.ProjectOnPlane(cameraTransform.forward, Vector3.up).normalized;
@@ -83,14 +92,14 @@ namespace EverRealm.Player
 
         void OnAttack(InputAction.CallbackContext _)
         {
-            if (cameraTransform != null) combatant.TryAttack(CameraForward());
+            if (cameraTransform != null) combatant.QueueAttack(CameraForward());
         }
 
         void OnDodge(InputAction.CallbackContext _)
         {
             if (cameraTransform == null) return;
             Vector3 direction = MoveDirection();
-            combatant.TryDodge(direction.sqrMagnitude > 0.01f ? direction : -transform.forward);
+            combatant.QueueDodge(direction.sqrMagnitude > 0.01f ? direction : -CameraForward());
         }
 
         void OnCycleWeightClass(InputAction.CallbackContext _) =>

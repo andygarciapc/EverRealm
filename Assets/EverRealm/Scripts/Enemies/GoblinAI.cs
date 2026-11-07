@@ -82,6 +82,15 @@ namespace EverRealm.Enemies
             if (warCry && !combatant.IsDead && TryGetComponent(out Speech speech)) speech.Say("Raaah!", Volume.Shout);
         }
 
+        /// <summary>The raid is over, for whatever reason: head home, leaving any fight behind.</summary>
+        public void CallOff()
+        {
+            if (!IsRaiding && mode != Mode.Fight) return;
+            tactics.Disengage();
+            EndRaid();
+            mode = Mode.Return;
+        }
+
         void Update()
         {
             if (combatant.IsDead || combatant.LocalTime.DeltaTime <= 0f) return;

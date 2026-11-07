@@ -23,6 +23,10 @@ namespace EverRealm.Combat
 
         [Header("Telegraph")]
         public Color windupTint = new Color(1f, 0.15f, 0.1f);
+        [Tooltip("The whole body glows through the wind-up too, not just the weapon. For enemies you need to read at a glance.")]
+        public bool telegraphBody;
+        [Tooltip("How far the body's colour moves towards the tint by the end of the wind-up.")]
+        [Range(0f, 1f)] public float bodyTelegraphStrength = 0.85f;
 
         [Header("Camera shake (impulse force)")]
         public float shakeWhenHurt = 0.6f;
@@ -82,10 +86,16 @@ namespace EverRealm.Combat
         void LateUpdate()
         {
             bool flashing = Time.time < flashUntil;
-            foreach (Renderer r in bodyRenderers)
-                Apply(r, flashing ? flashColor : (Color?)null);
-
             bool winding = combatant.State == CombatState.Windup;
+            foreach (Renderer r in bodyRenderers)
+            {
+                Color? color = null;
+                if (flashing) color = flashColor;
+                else if (winding && telegraphBody)
+                    color = Color.Lerp(r.sharedMaterial.GetColor(BaseColor), windupTint, combatant.StateProgress * bodyTelegraphStrength);
+                Apply(r, color);
+            }
+
             foreach (Renderer r in weaponRenderers)
             {
                 Color? color = null;

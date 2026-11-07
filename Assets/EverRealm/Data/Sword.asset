@@ -12,13 +12,50 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 244509355075d6145a2e085b545afd0f, type: 3}
   m_Name: Sword
   m_EditorClassIdentifier: EverRealm::EverRealm.Combat.WeaponData
+  attacks:
+  - name: Right slash
+    animation: SwordSlashRight
+    windup: 0.3
+    active: 0.1
+    recovery: 0.2
+    arc: 120
+    heightArc: 60
+    reachBonus: 0
+    damageMultiplier: 1
+    clipWindupEnd: 0.5
+    clipSwingEnd: 0.667
+    clipSettled: 1
+  - name: Left slash
+    animation: SwordSlashLeft
+    windup: 0.3
+    active: 0.1
+    recovery: 0.2
+    arc: 120
+    heightArc: 60
+    reachBonus: 0
+    damageMultiplier: 1
+    clipWindupEnd: 0.5
+    clipSwingEnd: 0.667
+    clipSettled: 1
+  - name: Stab
+    animation: SwordStab
+    windup: 0.3
+    active: 0.1
+    recovery: 0.2
+    arc: 40
+    heightArc: 30
+    reachBonus: 0.6
+    damageMultiplier: 1.2
+    clipWindupEnd: 0.5
+    clipSwingEnd: 0.667
+    clipSettled: 1
+  comboResetSeconds: 1.2
+  guardAnimation: SwordGuard
   damage: 20
-  knockback: 6
+  knockback: 4
   reach: 2.2
-  arc: 100
-  windup: 0.35
-  active: 0.12
-  recovery: 0.4
-  attackTurnSpeed: 540
-  staminaCost: 8
-  hitStop: 0.08
+  attackTurnSpeed: 720
+  staminaCost: 0
+  feintStaminaCost: 0
+  hitStop: 0.04
+  hitStagger: 0

@@ -8,7 +8,7 @@ using UnityEngine.Rendering;
 namespace EverRealm.World
 {
     /// <summary>
-    /// Generates the island and its hamlet at startup and on demand (R = new seed),
+    /// Generates the island, its hamlets and roads at startup and on demand (R = new seed),
     /// creating one GameObject per chunk plus the ocean plane and edge walls.
     /// </summary>
     [DefaultExecutionOrder(-100)] // Generate before anything subscribes; listeners place themselves in Start.
@@ -25,13 +25,19 @@ namespace EverRealm.World
 
         public WorldSettings Settings { get; private set; }
         public WorldData World { get; private set; }
-        /// <summary>The island's hamlet, or null if no site was flat enough.</summary>
-        public Settlement Settlement { get; private set; }
+        /// <summary>The island's hamlets; there may be fewer than wanted, or none, if the land is rough.</summary>
+        public IReadOnlyList<Settlement> Settlements { get; private set; } = Array.Empty<Settlement>();
+        public RoadNetwork Roads { get; private set; }
+        /// <summary>Where newcomers come ashore, if the coast has somewhere suitable.</summary>
+        public Vector3? Landing { get; private set; }
         public float GenerationMs { get; private set; }
         public float MeshingMs { get; private set; }
 
         /// <summary>Raised after every (re)generation, once colliders exist.</summary>
         public event Action Generated;
+
+        // The tallest ledge a jump gets a body up: two blocks.
+        const float HighestHop = 1.45f;
 
         // Dev-only keys, kept out of the player's action map.
         readonly InputAction regenerateAction = new InputAction("Regenerate", binding: "<Keyboard>/r");
@@ -66,12 +72,22 @@ namespace EverRealm.World
             Clear();
 
             var timer = Stopwatch.StartNew();
-            World = new TerrainGenerator(Settings).Generate();
-            Settlement = SettlementBuilder.Build(World, Settings);
+            var terrain = new TerrainGenerator(Settings);
+            World = terrain.Generate();
+            List<Settlement> settlements = SettlementBuilder.Build(World, Settings);
+            Settlements = settlements;
+            Roads = RoadBuilder.Build(World, Settings, settlements, out Vector3? landing);
+            Landing = landing;
+            int[] tops = SettlementBuilder.TopBlocks(World);
+            int formations = FormationBuilder.Build(World, Settings, terrain, tops, settlements);
+            List<CliffRim> rims = Cliffs.FindRims(World, Settings, tops);
+            int arches = ArchBuilder.Build(World, Settings, terrain, tops, rims, settlements);
+            int overhangs = OverhangBuilder.Build(World, Settings, terrain, tops, rims, settlements);
+            int trees = TreeBuilder.Plant(World, Settings, terrain, settlements);
             GenerationMs = (float)timer.Elapsed.TotalMilliseconds;
 
             timer.Restart();
-            palette = ChunkMesher.CreatePalette(Settings);
+            palette = ChunkMesher.CreatePalette();
             terrainMaterialInstance = new Material(terrainMaterial) { mainTexture = palette };
             float chunkMeters = World.ChunkSize * World.BlockSize;
             for (int cz = 0; cz < World.ChunksPerSide; cz++)
@@ -84,13 +100,14 @@ namespace EverRealm.World
 
             UnityEngine.Debug.Log($"[EverRealm] Island seed {Settings.seed}, block {Settings.blockSize}m: " +
                                   $"generate {GenerationMs:F0} ms, mesh+collide {MeshingMs:F0} ms, " +
-                                  (Settlement != null ? $"hamlet of {Settlement.Houses.Count} huts" : "no hamlet site"));
+                                  $"{Settlements.Count} hamlets, {Roads.Roads.Count} roads, {formations} formations, {arches} arches, {overhangs} overhanging columns, {trees} trees, " +
+                                  (Landing.HasValue ? "a landing" : "no landing"));
             Generated?.Invoke();
         }
 
         void SpawnChunk(int cx, int cz, Vector3 position)
         {
-            Mesh mesh = ChunkMesher.Build(World, cx, cz);
+            Mesh mesh = ChunkMesher.Build(World, Settings, cx, cz);
             chunkMeshes.Add(mesh);
             var chunk = new GameObject(mesh.name);
             chunk.transform.SetParent(transform, false);
@@ -145,10 +162,10 @@ namespace EverRealm.World
             if (palette != null) Destroy(palette);
         }
 
-        /// <summary>Where a newcomer starts: the hamlet square, or else the land column nearest the island centre.</summary>
+        /// <summary>Where a new character starts: the first hamlet's square, or else the land column nearest the island centre.</summary>
         public Vector3 FindSpawnPoint()
         {
-            if (Settlement != null) return Settlement.Square + Vector3.up * 0.5f;
+            if (Settlements.Count > 0) return Settlements[0].Square + Vector3.up * 0.5f;
             int center = World.SizeInBlocks / 2;
             float minHeight = Settings.seaLevel + Settings.beachHeight;
             for (int radius = 0; radius < center; radius++)
@@ -176,11 +193,29 @@ namespace EverRealm.World
             return true;
         }
 
-        /// <summary>Height in metres of the top surface of block column (x, z).</summary>
+        /// <summary>
+        /// Whether a body could walk the straight line between two points, which is how goblins march:
+        /// dry land all the way and no ledge too high to hop. Dropping off one is fine.
+        /// </summary>
+        public bool CanMarch(Vector3 from, Vector3 to)
+        {
+            float distance = Vector2.Distance(new Vector2(from.x, from.z), new Vector2(to.x, to.z));
+            int steps = Mathf.CeilToInt(distance / World.BlockSize);
+            float previous = float.PositiveInfinity;
+            for (int i = 0; i <= steps; i++)
+            {
+                Vector3 point = Vector3.Lerp(from, to, steps == 0 ? 0f : i / (float)steps);
+                if (!TryGetLandSurface(point.x, point.z, out Vector3 surface) || surface.y - previous > HighestHop) return false;
+                previous = surface.y;
+            }
+            return true;
+        }
+
+        /// <summary>Height in metres of the ground in block column (x, z), ignoring any tree on it.</summary>
         float SurfaceHeight(int x, int z)
         {
-            for (int y = World.Height - 1; y >= 0; y--)
-                if (World.GetBlock(x, y, z) != BlockType.Air)
+            for (int y = World.GetChunkTop(x / World.ChunkSize, z / World.ChunkSize) - 1; y >= 0; y--)
+                if (World.GetBlock(x, y, z) is not (BlockType.Air or BlockType.Leaves or BlockType.Log))
                     return (y + 1) * World.BlockSize;
             return 0f;
         }

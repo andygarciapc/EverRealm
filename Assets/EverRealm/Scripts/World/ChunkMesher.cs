@@ -5,14 +5,17 @@ using UnityEngine.Rendering;
 namespace EverRealm.World
 {
     /// <summary>
-    /// Builds one mesh per chunk, emitting only block faces that touch air. Colour comes from a
-    /// palette texture (rows = block type, columns = brightness shade) sampled via UVs, so a stock
-    /// URP Lit material renders it.
+    /// Builds one mesh per chunk, emitting only block faces that touch air. Colour comes from a texture
+    /// holding every colour (a flattened colour cube) sampled via UVs, so a stock URP Lit material can show
+    /// any colour on any block.
     /// </summary>
     public static class ChunkMesher
     {
         public const int ShadeCount = 8;
-        static readonly int BlockTypeCount = System.Enum.GetValues(typeof(BlockType)).Length;
+        // 64 levels per channel: 8 x 8 tiles of 64 x 64 in one 512 x 512 texture.
+        const int CubeLevels = 64, CubeTiles = 8, CubeWidth = CubeLevels * CubeTiles;
+        // Rock layers are this many blocks thick.
+        const int LayerBlocks = 3;
 
         static readonly Vector3Int[] FaceDirections =
         {
@@ -37,7 +40,7 @@ namespace EverRealm.World
         static readonly List<Vector2> Uvs = new List<Vector2>();
         static readonly List<int> Triangles = new List<int>();
 
-        public static Mesh Build(WorldData world, int cx, int cz)
+        public static Mesh Build(WorldData world, WorldSettings settings, int cx, int cz)
         {
             Vertices.Clear(); Normals.Clear(); Uvs.Clear(); Triangles.Clear();
 
@@ -55,11 +58,17 @@ namespace EverRealm.World
                 if (block == (byte)BlockType.Air) continue;
 
                 int gx = originX + lx, gz = originZ + lz;
-                Vector2 uv = PaletteUv(block, Shade(gx, y, gz));
+                Vector2 uv = default;
+                bool coloured = false;
                 for (int f = 0; f < FaceDirections.Length; f++)
                 {
                     Vector3Int d = FaceDirections[f];
                     if (IsSolid(world, blocks, lx + d.x, y + d.y, lz + d.z, gx + d.x, gz + d.z)) continue;
+                    if (!coloured)
+                    {
+                        uv = CubeUv(ColorOf(world, settings, (BlockType)block, gx, y, gz));
+                        coloured = true;
+                    }
                     AddFace(f, new Vector3(lx, y, lz), blockSize, uv);
                 }
             }
@@ -77,8 +86,11 @@ namespace EverRealm.World
         static bool IsSolid(WorldData world, byte[] blocks, int lx, int y, int lz, int gx, int gz)
         {
             int size = world.ChunkSize;
-            if (lx >= 0 && lx < size && lz >= 0 && lz < size && y >= 0 && y < world.Height)
-                return blocks[world.LocalIndex(lx, y, lz)] != (byte)BlockType.Air;
+            if (lx >= 0 && lx < size && lz >= 0 && lz < size && y >= 0)
+            {
+                int index = world.LocalIndex(lx, y, lz);
+                return index < blocks.Length && blocks[index] != (byte)BlockType.Air;
+            }
             return world.GetBlock(gx, y, gz) != BlockType.Air;
         }
 
@@ -96,43 +108,68 @@ namespace EverRealm.World
             Triangles.Add(start); Triangles.Add(start + 2); Triangles.Add(start + 3);
         }
 
-        /// <summary>Stable per-block hash so each block keeps its shade across rebuilds.</summary>
-        static int Shade(int x, int y, int z)
+        /// <summary>What a block looks like where it stands, with its own small shift in brightness.</summary>
+        static Color32 ColorOf(WorldData world, WorldSettings settings, BlockType block, int x, int y, int z)
+        {
+            ref ColumnPaint paint = ref world.Paint(x, z);
+            int hash = Hash(x, y, z);
+            Color color = block switch
+            {
+                BlockType.Grass => paint.Ground,
+                BlockType.Leaves => paint.Foliage,
+                BlockType.Stone => Hash(0, y / LayerBlocks, 0) % 3 == 0 ? paint.RockAlt : paint.Rock,
+                BlockType.Dirt => Color.Lerp(settings.blockColors[(int)block], paint.Rock, 0.6f),
+                _ => settings.blockColors[(int)block],
+            };
+            float shade = hash % ShadeCount / (float)(ShadeCount - 1) * 2f - 1f;
+            color *= 1f + shade * settings.colorJitter;
+            color.a = 1f;
+            return color;
+        }
+
+        /// <summary>Stable non-negative hash, so a block keeps its look across rebuilds.</summary>
+        public static int Hash(int x, int y, int z)
         {
             unchecked
             {
                 int h = x * 73856093 ^ y * 19349663 ^ z * 83492791;
                 h ^= h >> 13;
                 h *= 0x5bd1e995;
-                return (h & 0x7fffffff) % ShadeCount;
+                h ^= h >> 15;
+                return h & 0x7fffffff;
             }
         }
 
-        static Vector2 PaletteUv(byte block, int shade) =>
-            new Vector2((shade + 0.5f) / ShadeCount, (block + 0.5f) / BlockTypeCount);
+        static int Level(byte channel) => channel * CubeLevels / 256;
 
-        /// <summary>Palette texture matching <see cref="PaletteUv"/>: one row per block type, one column per shade.</summary>
-        public static Texture2D CreatePalette(WorldSettings settings)
+        static Vector2 CubeUv(Color32 color)
         {
-            var texture = new Texture2D(ShadeCount, BlockTypeCount, TextureFormat.RGBA32, false)
+            int blue = Level(color.b);
+            return new Vector2((Level(color.r) + blue % CubeTiles * CubeLevels + 0.5f) / CubeWidth,
+                               (Level(color.g) + blue / CubeTiles * CubeLevels + 0.5f) / CubeWidth);
+        }
+
+        /// <summary>The colour texture matching <see cref="CubeUv"/>.</summary>
+        public static Texture2D CreatePalette()
+        {
+            var pixels = new Color32[CubeWidth * CubeWidth];
+            for (int y = 0; y < CubeWidth; y++)
+            for (int x = 0; x < CubeWidth; x++)
             {
-                name = "Block Palette",
+                int blue = x / CubeLevels + y / CubeLevels * CubeTiles;
+                pixels[x + y * CubeWidth] = new Color32(Channel(x % CubeLevels), Channel(y % CubeLevels), Channel(blue), 255);
+            }
+            var texture = new Texture2D(CubeWidth, CubeWidth, TextureFormat.RGBA32, false)
+            {
+                name = "Block Colours",
                 filterMode = FilterMode.Point,
                 wrapMode = TextureWrapMode.Clamp,
             };
-            for (int block = 0; block < BlockTypeCount; block++)
-            {
-                Color baseColor = block < settings.blockColors.Length ? settings.blockColors[block] : Color.magenta;
-                for (int shade = 0; shade < ShadeCount; shade++)
-                {
-                    float t = shade / (float)(ShadeCount - 1) * 2f - 1f;
-                    Color c = baseColor * (1f + t * settings.colorJitter);
-                    c.a = 1f;
-                    texture.SetPixel(shade, block, c);
-                }
-            }
+            texture.SetPixels32(pixels);
             texture.Apply();
             return texture;
         }
+
+        static byte Channel(int level) => (byte)(level * 255 / (CubeLevels - 1));
     }
 }

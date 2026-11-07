@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using EverRealm.World;
 using NUnit.Framework;
 using UnityEngine;
@@ -56,6 +57,19 @@ namespace EverRealm.Tests
             var generator = new TerrainGenerator(settings);
             Assert.Less(generator.HeightAt(0.5f, 0.5f), settings.seaLevel);
             Assert.Less(generator.HeightAt(settings.islandSize - 0.5f, settings.islandSize * 0.5f), settings.seaLevel);
+        }
+
+        [TestCase(12345), TestCase(777), TestCase(1), TestCase(42)]
+        public void EveryBiomeHasLandOnAFullSizeIsland(int seed)
+        {
+            WorldSettings settings = ScriptableObject.CreateInstance<WorldSettings>();
+            settings.seed = seed;
+            var generator = new TerrainGenerator(settings);
+            var seen = new HashSet<string>();
+            for (float z = 0f; z < settings.islandSize; z += 8f)
+            for (float x = 0f; x < settings.islandSize; x += 8f)
+                if (generator.HeightAt(x, z) > settings.seaLevel + settings.beachHeight) seen.Add(generator.BiomeAt(x, z).name);
+            Assert.AreEqual(settings.biomes.Length, seen.Count, string.Join(", ", seen));
         }
     }
 }

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using EverRealm.Characters;
 using EverRealm.Combat;
 using EverRealm.World;
@@ -13,11 +14,13 @@ namespace EverRealm.Settlements
     /// comes close (a hostile in sight, the sound of fighting, or an ally's alarm) militia fight through
     /// <see cref="MeleeTactics"/> until they break (some never do); civilians run home, or away if the danger
     /// is between them and home, though some turn and fight when cornered. Whoever sees the danger first
-    /// raises the alarm. Disabled while the player controls the body. Uses only the commands any brain has.
+    /// raises the alarm. Sent on a journey, it walks the road point by point: militia still fight, those who can't
+    /// fight run on down the road, and anyone scattered rejoins it further on. Disabled while the player controls the body. Uses only the commands
+    /// any brain has.
     /// </summary>
     [RequireComponent(typeof(CharacterMotor), typeof(Combatant), typeof(Agent))]
     [RequireComponent(typeof(MeleeTactics), typeof(Speech))]
-    public sealed class VillagerAI : MonoBehaviour
+    public sealed class VillagerAI : MonoBehaviour, IPerson
     {
         [Header("Awareness")]
         public float sightRadius = 14f;
@@ -42,6 +45,12 @@ namespace EverRealm.Settlements
         public float gatherRadius = 4f;
         public float arriveDistance = 0.6f;
 
+        [Header("Travelling")]
+        [Tooltip("A road point counts as passed this close, so a party doesn't jostle for the same spot.")]
+        public float waypointRadius = 1.5f;
+        [Tooltip("Within this much of a hamlet's flattened ground, a traveller goes round its houses and through its doorways.")]
+        public float amongHousesMargin = 5f;
+
         // Body radius plus a little, so paths don't graze walls.
         const float WallMargin = 0.45f;
 
@@ -55,7 +64,10 @@ namespace EverRealm.Settlements
         Settlement settlement;
         float lastThreatTime = float.NegativeInfinity, lastShoutTime = float.NegativeInfinity, nextIdleTime;
         Vector3 threatPosition, idleOffset;
-        bool leavingThroughDoor, enteringThroughDoor, cornered, broken;
+        bool leavingThroughDoor, enteringThroughDoor, cornered, broken, camped, offRoad;
+        IReadOnlyList<Vector3> route;
+        IReadOnlyList<Settlement> places;
+        float bestWaypointDistance;
 
         public Temperament Temperament { get; private set; }
         /// <summary>Breaks off and flees below this fraction of health; 0 fights to the death.</summary>
@@ -68,6 +80,17 @@ namespace EverRealm.Settlements
         public Vector3 WorkSpot { get; private set; }
         public bool IsAssigned => clock != null;
         public bool IsAlive => !combatant.IsDead;
+        /// <summary>Armed and unbroken, so it counts toward holding a hamlet. Broken militia stay broken.</summary>
+        public bool IsFighter => IsAlive && Temperament == Temperament.Militia && !broken;
+        public Vector3 Position => transform.position;
+        public bool IsTravelling => route != null;
+        /// <summary>Reached the end of the road it was walking.</summary>
+        public bool HasArrived => route != null && RouteIndex >= route.Count;
+        /// <summary>The next road point to reach.</summary>
+        public int RouteIndex { get; private set; }
+        /// <summary>Seconds on the road without getting any closer. Time spent fighting or fleeing doesn't count.</summary>
+        public float NoProgressSeconds { get; private set; }
+        public Gait TravelPace { get; set; } = Gait.Walk;
         /// <summary>What it's doing right now, for debug readouts.</summary>
         public string Activity { get; private set; } = "Idle";
 
@@ -106,6 +129,44 @@ namespace EverRealm.Settlements
             ShowWeapon(temperament == Temperament.Militia);
         }
 
+        /// <summary>Gives this body a new home. Who it is and what it has been through stay the same.</summary>
+        public void MoveInto(Settlement home, House house, Vector3 bed, Vector3 workSpot)
+        {
+            settlement = home;
+            Home = house;
+            Bed = bed;
+            WorkSpot = workSpot;
+            route = null;
+            camped = false;
+        }
+
+        /// <summary>
+        /// Leaves any home behind and walks <paramref name="road"/> to its end. Fights and flees as ever on the
+        /// way, then rejoins the road ahead. <paramref name="settlements"/> are the places it may pass through.
+        /// </summary>
+        public void SetOff(IReadOnlyList<Vector3> road, IReadOnlyList<Settlement> settlements)
+        {
+            Home = null;
+            route = road;
+            places = settlements;
+            RouteIndex = 0;
+            NoProgressSeconds = 0f;
+            bestWaypointDistance = float.PositiveInfinity;
+            offRoad = true;
+            camped = false;
+            TravelPace = Gait.Walk;
+        }
+
+        /// <summary>Nowhere to go for now: stays by <paramref name="camp"/>, homeless, until told otherwise.</summary>
+        public void MakeCamp(Vector3 camp)
+        {
+            settlement = null;
+            Home = null;
+            Bed = WorkSpot = camp;
+            route = null;
+            camped = true;
+        }
+
         void Update()
         {
             float dt = combatant.LocalTime.DeltaTime;
@@ -120,7 +181,8 @@ namespace EverRealm.Settlements
                 lastThreatTime = Time.time;
                 threatPosition = threat.transform.position;
             }
-            float calmAfter = Temperament == Temperament.Civilian ? hideSeconds : calmDownSeconds;
+            // Nowhere to hide on the road: after a short scare they get moving again.
+            float calmAfter = Temperament == Temperament.Civilian && !IsTravelling ? hideSeconds : calmDownSeconds;
             bool alarmed = Time.time - lastThreatTime < calmAfter;
             bool canFight = UpdateCourage(threat);
 
@@ -135,12 +197,15 @@ namespace EverRealm.Settlements
                 House theirs = settlement?.HouseContaining(foe);
                 if (mine != theirs) NavigateTo(foe, theirs, Gait.Run);
                 else closeIn = true;
+                offRoad = true;
             }
             else
             {
                 tactics.Disengage();
-                if (alarmed && canFight) Rally();
-                else if (alarmed) Flee();
+                if (alarmed && !canFight && IsTravelling) RunDownTheRoad(dt);
+                else if (alarmed && !canFight) Flee();
+                else if (IsTravelling) FollowRoad(dt, TravelPace);
+                else if (alarmed) Rally();
                 else FollowRoutine();
             }
             tactics.Tick(closeIn);
@@ -229,7 +294,7 @@ namespace EverRealm.Settlements
         void Flee()
         {
             Activity = "Fleeing";
-            Gait gait = combatant.Stamina.Current > combatant.Stamina.max * 0.25f ? Gait.Sprint : Gait.Run;
+            Gait gait = FleeingGait;
             if (Home != null && (Home.Contains(transform.position) || HomeIsSafe()))
             {
                 if (NavigateTo(Bed, Home, gait)) Activity = "Hiding";
@@ -239,6 +304,8 @@ namespace EverRealm.Settlements
             steering.MoveTowards(transform.position + away * 5f, gait);
         }
 
+        Gait FleeingGait => combatant.Stamina.Current > combatant.Stamina.max * 0.25f ? Gait.Sprint : Gait.Run;
+
         /// <summary>Home is safe to run to if we'd reach its door before the threat does.</summary>
         bool HomeIsSafe() =>
             Steering.FlatDistance(threatPosition, Home.Door) > Distance(Home.Door) + 1f;
@@ -247,6 +314,12 @@ namespace EverRealm.Settlements
 
         void FollowRoutine()
         {
+            if (camped)
+            {
+                Activity = "Stranded";
+                Loiter(WorkSpot, gatherRadius);
+                return;
+            }
             switch (clock.Phase)
             {
                 case DayPhase.Day:
@@ -277,6 +350,73 @@ namespace EverRealm.Settlements
                 nextIdleTime = Time.time + Random.Range(3f, 7f);
             }
             NavigateTo(centre + idleOffset, null, Gait.Walk);
+        }
+
+        // ---- The road ----
+
+        /// <summary>
+        /// Those who can't fight run on rather than back: a party that turned round at every camp in sight of
+        /// the road would never get past it.
+        /// </summary>
+        void RunDownTheRoad(float dt)
+        {
+            FollowRoad(dt, FleeingGait);
+            Activity = "Running";
+        }
+
+        void FollowRoad(float dt, Gait gait)
+        {
+            Activity = "Travelling";
+            settlement = SettlementHere();
+            if (offRoad)
+            {
+                RouteIndex = NearestRoadPointAhead();
+                bestWaypointDistance = float.PositiveInfinity;
+                offRoad = false;
+            }
+            while (RouteIndex < route.Count && Distance(route[RouteIndex]) <= waypointRadius)
+            {
+                RouteIndex++;
+                bestWaypointDistance = float.PositiveInfinity;
+                NoProgressSeconds = 0f;
+            }
+            if (HasArrived)
+            {
+                steering.Stop();
+                return;
+            }
+
+            float distance = Distance(route[RouteIndex]);
+            if (distance < bestWaypointDistance - 0.25f)
+            {
+                bestWaypointDistance = distance;
+                NoProgressSeconds = 0f;
+            }
+            else NoProgressSeconds += dt;
+            NavigateTo(route[RouteIndex], null, gait);
+        }
+
+        /// <summary>The hamlet whose houses it's among, if any, so it can find its way round them.</summary>
+        Settlement SettlementHere()
+        {
+            foreach (Settlement place in places)
+                if (Distance(place.Square) <= place.Radius + amongHousesMargin) return place;
+            return null;
+        }
+
+        /// <summary>Where to rejoin after being driven off the road: never back the way it came.</summary>
+        int NearestRoadPointAhead()
+        {
+            int best = RouteIndex;
+            float bestDistance = float.PositiveInfinity;
+            for (int i = RouteIndex; i < route.Count; i++)
+            {
+                float distance = Distance(route[i]);
+                if (distance >= bestDistance) continue;
+                bestDistance = distance;
+                best = i;
+            }
+            return best;
         }
 
         // ---- Getting around ----

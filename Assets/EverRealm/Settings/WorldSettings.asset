@@ -13,22 +13,36 @@ MonoBehaviour:
   m_Name: WorldSettings
   m_EditorClassIdentifier: EverRealm::EverRealm.World.WorldSettings
   seed: 12345
-  islandSize: 256
+  islandSize: 1024
   blockSize: 0.7
   chunkSize: 32
-  maxHeight: 48
+  maxHeight: 146
   seaLevel: 10
   seaFloor: 2
-  heightExponent: 1.8
-  noiseScale: 110
-  octaves: 5
-  persistence: 0.5
+  noiseScale: 190
+  ridgeScale: 170
+  octaves: 4
+  persistence: 0.45
   lacunarity: 2
+  regionSize: 260
+  regionBlend: 70
+  regionWarp: 70
+  colorPatchScale: 45
   falloffStart: 0.55
   coastWarp: 0.25
   beachHeight: 1.5
   dirtDepth: 3
-  rockLine: 0.7
+  plateauScale: 150
+  plateauLine: 0.6
+  cliffBreakScale: 55
+  gullyShare: 0.3
+  snowLine: 104
+  cliffRise: 1.4
+  treeSpacing: 6
+  treeHamletMargin: 3
+  hamletCount: 3
+  minHamletSpacing: 380
+  maxHamletSpacing: 560
   hamletRadius: 14
   hamletBlend: 6
   hamletMaxRelief: 8
@@ -44,4 +58,8 @@ MonoBehaviour:
   - {r: 0.4, g: 0.27, b: 0.16, a: 1}
   - {r: 0.66, g: 0.5, b: 0.32, a: 1}
   - {r: 0.78, g: 0.66, b: 0.36, a: 1}
+  - {r: 0.62, g: 0.54, b: 0.42, a: 1}
+  - {r: 0.2, g: 0.5, b: 0.22, a: 1}
+  - {r: 0.34, g: 0.24, b: 0.17, a: 1}
+  - {r: 0.93, g: 0.95, b: 0.98, a: 1}
   colorJitter: 0.08

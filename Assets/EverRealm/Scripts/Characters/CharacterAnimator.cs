@@ -11,6 +11,7 @@ namespace EverRealm.Characters
     /// it reads gameplay state and never changes it. Actions (swing, dodges, death) are posed by gameplay
     /// time, not clip time: each phase of the action is mapped onto the matching stretch of its clip, so
     /// combat timings can change without re-authoring animation, and hit-stop freezes the pose for free.
+    /// The aim up or down bends that pose afterwards, through the spine and arms.
     /// </summary>
     [DefaultExecutionOrder(100)] // After the combatant and motor have updated this frame.
     [RequireComponent(typeof(CharacterMotor), typeof(Combatant), typeof(LocalTime))]
@@ -34,11 +35,6 @@ namespace EverRealm.Characters
 
         [SerializeField] Animator animator;
 
-        [Header("Swing clip key points (normalized clip time)")]
-        [Range(0f, 1f)] public float attackWindupEnd = 0.29f;
-        [Range(0f, 1f)] public float attackSwingEnd = 0.43f;
-        [Range(0f, 1f)] public float attackSettled = 0.83f;
-
         [Header("Dodge clip key points")]
         public DodgeKeys roll = new DodgeKeys(0.75f, 1f);
         public DodgeKeys hopForward = new DodgeKeys(0.75f, 1f);
@@ -53,18 +49,30 @@ namespace EverRealm.Characters
 
         [Header("Blending")]
         public float crossFadeSeconds = 0.08f;
+        [Tooltip("Blend between one swing's clip and the next. Keep this well under the wind-up, or the blend hides it and the clip lags the hit.")]
+        public float attackCrossFadeSeconds = 0.03f;
+        [Tooltip("Seconds for the arms to take up a swing over whatever the legs are doing.")]
+        public float swingBlendIn = 0.05f;
+        [Tooltip("Seconds for the arms to return to what the legs are doing after a swing.")]
+        public float swingBlendOut = 0.12f;
         [Tooltip("Vertical speed that counts as having jumped (rather than walked off a ledge).")]
         public float jumpSpeed = 1f;
         [Tooltip("Horizontal speed above which a jump plays the running jump.")]
         public float runningJumpSpeed = 1.5f;
         public float speedDamping = 0.08f;
 
+        [Header("Aiming up and down")]
+        [Tooltip("How much of the aim the spine bends through. The arms take the rest.")]
+        [Range(0f, 1f)] public float spinePitchShare = 0.55f;
+        [Tooltip("Degrees per second the body follows the aim, so a quick look doesn't snap it.")]
+        public float pitchFollowSpeed = 300f;
+
         static readonly int SpeedParam = Animator.StringToHash("Speed");
         static readonly int PhaseParam = Animator.StringToHash("Phase");
         static readonly int Locomotion = Animator.StringToHash("Locomotion");
         static readonly int StandingJump = Animator.StringToHash("StandingJump");
         static readonly int RunningJump = Animator.StringToHash("RunningJump");
-        static readonly int Attack = Animator.StringToHash("Attack");
+        static readonly int SwingPhaseParam = Animator.StringToHash("SwingPhase");
         static readonly int Death = Animator.StringToHash("Death");
         static readonly int[] DodgeStates =
         {
@@ -78,8 +86,13 @@ namespace EverRealm.Characters
         CharacterMotor motor;
         Combatant combatant;
         LocalTime localTime;
-        int current;
+        int current, upperBody = -1;
         bool airborne;
+        string swingPlaying;
+        float swingWeight;
+        float shownPitch;
+        Transform[] spineBones, armBones;
+        Renderer body;
 
         void Awake()
         {
@@ -87,22 +100,24 @@ namespace EverRealm.Characters
             combatant = GetComponent<Combatant>();
             localTime = GetComponent<LocalTime>();
             animator.applyRootMotion = false; // The motor moves the body; clips play in place.
+            upperBody = animator.GetLayerIndex("UpperBody");
+            spineBones = Bones(HumanBodyBones.Spine, HumanBodyBones.Chest, HumanBodyBones.UpperChest);
+            armBones = Bones(HumanBodyBones.LeftUpperArm, HumanBodyBones.RightUpperArm);
+            body = animator.GetComponentInChildren<SkinnedMeshRenderer>();
         }
+
+        Transform[] Bones(params HumanBodyBones[] wanted) =>
+            Array.FindAll(Array.ConvertAll(wanted, animator.GetBoneTransform), bone => bone != null);
 
         void Update()
         {
             animator.speed = localTime.IsFrozen ? 0f : 1f;
             float dt = localTime.DeltaTime;
+            UpdateSwing(dt);
 
+            // A swing belongs to the upper body, so whatever the legs were doing carries on under it.
             switch (combatant.State)
             {
-                case CombatState.Windup:
-                case CombatState.Active:
-                case CombatState.Recovery:
-                    Play(Attack);
-                    animator.SetFloat(PhaseParam, AttackPhase(combatant.State, combatant.StateProgress,
-                                                              attackWindupEnd, attackSwingEnd, attackSettled));
-                    break;
                 case CombatState.Dodging:
                 {
                     DodgeProfile dodge = combatant.CurrentDodge;
@@ -123,6 +138,56 @@ namespace EverRealm.Characters
             }
         }
 
+        /// <summary>Bends the finished pose towards the aim, so every swing and guard reaches up or down without its own clips.</summary>
+        void LateUpdate()
+        {
+            shownPitch = Mathf.MoveTowards(shownPitch, combatant.AimPitch, pitchFollowSpeed * localTime.DeltaTime);
+            float pitch = shownPitch * swingWeight;
+            if (Mathf.Abs(pitch) < 0.01f) return;
+            // A culled animator doesn't rewrite the bones, so bending them would add up from frame to frame.
+            if (animator.cullingMode != AnimatorCullingMode.AlwaysAnimate && body != null && !body.isVisible) return;
+
+            (float perSpineBone, float perArm) = SplitPitch(pitch, spinePitchShare, spineBones.Length);
+            Vector3 axis = transform.right; // Turning about it by a positive angle tips forward down.
+            foreach (Transform bone in spineBones) bone.rotation = Quaternion.AngleAxis(-perSpineBone, axis) * bone.rotation;
+            foreach (Transform bone in armBones) bone.rotation = Quaternion.AngleAxis(-perArm, axis) * bone.rotation;
+        }
+
+        /// <summary>Plays the current attack or guard on the upper body, posed by gameplay time, and fades that layer in and out.</summary>
+        void UpdateSwing(float dt)
+        {
+            if (upperBody < 0) return;
+            bool swinging = combatant.State is CombatState.Windup or CombatState.Active or CombatState.Recovery;
+            string guard = combatant.Weapon != null ? combatant.Weapon.guardAnimation : null;
+            bool guarding = combatant.State == CombatState.Blocking && !string.IsNullOrEmpty(guard);
+            if (swinging)
+            {
+                WeaponAttack attack = combatant.CurrentAttack;
+                PlayUpperBody(attack.animation);
+                animator.SetFloat(SwingPhaseParam, AttackPhase(combatant.State, combatant.StateProgress,
+                                                              attack.clipWindupEnd, attack.clipSwingEnd, attack.clipSettled));
+            }
+            else if (guarding)
+            {
+                PlayUpperBody(guard);
+                animator.SetFloat(SwingPhaseParam, 0.5f); // A guard is one held pose.
+            }
+
+            // Dodges and death are whole-body clips, so the arms let go of the swing at once.
+            bool wholeBody = combatant.State is CombatState.Dodging or CombatState.Dead;
+            bool upperBodyBusy = swinging || guarding;
+            float seconds = upperBodyBusy ? swingBlendIn : wholeBody ? attackCrossFadeSeconds : swingBlendOut;
+            swingWeight = Mathf.MoveTowards(swingWeight, upperBodyBusy ? 1f : 0f, seconds > 0f ? dt / seconds : 1f);
+            animator.SetLayerWeight(upperBody, swingWeight);
+        }
+
+        void PlayUpperBody(string state)
+        {
+            if (state == swingPlaying) return;
+            swingPlaying = state;
+            animator.CrossFadeInFixedTime(state, attackCrossFadeSeconds, upperBody);
+        }
+
         void UpdateLocomotion(float dt)
         {
             Vector3 velocity = motor.ActualVelocity;
@@ -140,11 +205,13 @@ namespace EverRealm.Characters
             Play(Locomotion);
         }
 
-        void Play(int state)
+        void Play(int state) => Play(state, crossFadeSeconds);
+
+        void Play(int state, float fadeSeconds)
         {
             if (state == current) return;
             current = state;
-            animator.CrossFadeInFixedTime(state, crossFadeSeconds);
+            animator.CrossFadeInFixedTime(state, fadeSeconds);
             if (state != Locomotion && state != StandingJump && state != RunningJump) airborne = false;
         }
 
@@ -158,6 +225,13 @@ namespace EverRealm.Characters
         };
 
         // ---- Pure mapping, unit-tested ----
+
+        /// <summary>Shares out an aim between the spine bones, which add up, and each arm, which rides on top of them.</summary>
+        public static (float perSpineBone, float perArm) SplitPitch(float pitch, float spineShare, int spineBones)
+        {
+            if (spineBones <= 0) return (0f, pitch);
+            return (pitch * spineShare / spineBones, pitch * (1f - spineShare));
+        }
 
         /// <summary>Clip time for a swing: wind-up, active and recovery each fill their stretch of the clip.</summary>
         public static float AttackPhase(CombatState state, float progress, float windupEnd, float swingEnd, float settled)

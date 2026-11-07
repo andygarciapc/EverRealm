@@ -14,12 +14,12 @@ OcclusionCullingSettings:
 RenderSettings:
   m_ObjectHideFlags: 0
   serializedVersion: 10
-  m_Fog: 0
+  m_Fog: 1
   m_FogColor: {r: 0.5, g: 0.5, b: 0.5, a: 1}
-  m_FogMode: 3
+  m_FogMode: 1
   m_FogDensity: 0.01
-  m_LinearFogStart: 0
-  m_LinearFogEnd: 300
+  m_LinearFogStart: 140
+  m_LinearFogEnd: 420
   m_AmbientSkyColor: {r: 0.212, g: 0.227, b: 0.259, a: 1}
   m_AmbientEquatorColor: {r: 0.114, g: 0.125, b: 0.133, a: 1}
   m_AmbientGroundColor: {r: 0.047, g: 0.043, b: 0.035, a: 1}
@@ -130,6 +130,62 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 8a779e1c11b574d4e888f681060c4d78, type: 3}
   m_Name: 
   m_EditorClassIdentifier: EverRealm::EverRealm.Player.PlayerController
+--- !u!1 &48985119
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 48985121}
+  - component: {fileID: 48985120}
+  m_Layer: 0
+  m_Name: Journey Director
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &48985120
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 48985119}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3c235e924d92a30428a4ac394dbba0c9, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: EverRealm::EverRealm.Settlements.JourneyDirector
+  world: {fileID: 394727653}
+  clock: {fileID: 1852483940}
+  population: {fileID: 1896008548}
+  newcomerIntervalHours: 18
+  newcomerIntervalJitter: 6
+  minNewcomers: 1
+  maxNewcomers: 2
+  minColonists: 3
+  maxColonists: 5
+  residentsKeptBehind: 3
+  stuckSeconds: 60
+  catchUpPoints: 5
+--- !u!4 &48985121
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 48985119}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &330585543
 GameObject:
   m_ObjectHideFlags: 0
@@ -190,7 +246,7 @@ Camera:
     width: 1
     height: 1
   near clip plane: 0.1
-  far clip plane: 5000
+  far clip plane: 1500
   field of view: 40
   orthographic: 0
   orthographic size: 10
@@ -352,6 +408,7 @@ MonoBehaviour:
   clock: {fileID: 1852483940}
   population: {fileID: 1896008548}
   raids: {fileID: 1818600323}
+  journeys: {fileID: 48985120}
 --- !u!4 &394727655
 Transform:
   m_ObjectHideFlags: 0
@@ -383,13 +440,15 @@ MonoBehaviour:
   clock: {fileID: 1852483940}
   goblinPrefab: {fileID: 1526207522914436614, guid: ab6162a9e89a3fb43932e9f48144c525, type: 3}
   session: {fileID: 679170575}
-  campCount: 6
+  campCount: 18
   minPerCamp: 1
   maxPerCamp: 3
   campRadius: 3
   minDistanceFromSpawn: 35
   minDistanceFromHamlet: 50
   minCampSpacing: 40
+  campsPerHamlet: 4
+  hamletCampRange: 180
   regrowHours: 12
   campCapacity: 4
   debugSpawnDistance: 7
@@ -763,9 +822,9 @@ MonoBehaviour:
       YOffset: 0
     Strategy: 0
     MaximumEffort: 4
-    SmoothingTime: 0
-    Damping: 0.1
-    DampingWhenOccluded: 0
+    SmoothingTime: 0.3
+    Damping: 0.7
+    DampingWhenOccluded: 0.25
   ShotQualityEvaluation:
     Enabled: 0
     OptimalDistance: 10
@@ -891,7 +950,7 @@ MonoBehaviour:
     FieldOfView: 40
     OrthographicSize: 10
     NearClipPlane: 0.1
-    FarClipPlane: 5000
+    FarClipPlane: 1500
     Dutch: 0
     ModeOverride: 0
     PhysicalProperties:
@@ -980,13 +1039,18 @@ MonoBehaviour:
   encounters: {fileID: 394727656}
   population: {fileID: 1896008548}
   firstRaidHours: 10
-  raidIntervalHours: 30
-  raidIntervalJitter: 6
-  goblinsPerFighter: 1.5
+  firstRaidStaggerHours: 10
+  raidIntervalHours: 20
+  raidIntervalJitter: 4
+  goblinsPerFighter: 2
   minPartySize: 2
+  raidReach: 250
   postponeHours: 4
   musterDistance: 36
   musterTimeoutSeconds: 90
+  attackRadius: 40
+  stragglerHours: 2
+  attackTimeoutHours: 4
 --- !u!4 &1818600324
 Transform:
   m_ObjectHideFlags: 0
@@ -1047,6 +1111,10 @@ MonoBehaviour:
   nightSky: {r: 0.16, g: 0.2, b: 0.34, a: 1}
   nightEquator: {r: 0.1, g: 0.12, b: 0.2, a: 1}
   nightGround: {r: 0.05, g: 0.05, b: 0.08, a: 1}
+  hazeStart: 140
+  hazeEnd: 420
+  dayHaze: {r: 0.72, g: 0.79, b: 0.87, a: 1}
+  nightHaze: {r: 0.05, g: 0.06, b: 0.11, a: 1}
   skipHours: 2
 --- !u!4 &1852483941
 Transform:
@@ -1098,21 +1166,13 @@ MonoBehaviour:
   minPerHouse: 1
   maxPerHouse: 2
   militiaFraction: 0.4
+  minStartingMilitia: 2
   fightToDeathChance: 0.33
   minBreakHealth: 0.1
   maxBreakHealth: 0.4
   cornerFightChance: 0.25
-  settlerIntervalHours: 36
-  settlerIntervalJitter: 12
-  minSettlers: 1
-  maxSettlers: 2
-  arrivalDistance: 70
-  arrivalClearance: 30
-  recolonizeChance: 0.5
   minColonizeDays: 2
   maxColonizeDays: 4
-  minColonists: 3
-  maxColonists: 5
 --- !u!4 &1896008549
 Transform:
   m_ObjectHideFlags: 0
@@ -1202,4 +1262,5 @@ SceneRoots:
   - {fileID: 679170577}
   - {fileID: 1852483941}
   - {fileID: 1896008549}
+  - {fileID: 48985121}
   - {fileID: 1818600324}

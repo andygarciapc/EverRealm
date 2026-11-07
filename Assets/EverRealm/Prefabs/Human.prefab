@@ -232,11 +232,11 @@ GameObject:
   - component: {fileID: 8850576818249388856}
   - component: {fileID: 2057214429020975209}
   - component: {fileID: 4803768620785071973}
-  - component: {fileID: 7677890196822912603}
   - component: {fileID: 5213316464468229056}
   - component: {fileID: 2740787386081916799}
   - component: {fileID: 7888090641313655638}
   - component: {fileID: 2350970551898447499}
+  - component: {fileID: 1336925117886035596}
   m_Layer: 0
   m_Name: Human
   m_TagString: Player
@@ -282,7 +282,7 @@ CharacterController:
   m_Height: 2
   m_Radius: 0.35
   m_SlopeLimit: 50
-  m_StepOffset: 0.65
+  m_StepOffset: 0.75
   m_SkinWidth: 0.04
   m_MinMoveDistance: 0
   m_Center: {x: 0, y: 0.9, z: 0}
@@ -299,6 +299,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: EverRealm::EverRealm.Player.PlayerController
   cameraTarget: {fileID: 9222608367155155865}
+  restingCameraPitch: -15
 --- !u!114 &5495976436081396823
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -355,18 +356,19 @@ MonoBehaviour:
   blockMoveMultiplier: 0.45
   blockKnockbackMultiplier: 0.4
   blockTurnSpeed: 540
-  hitStagger: 0.35
   guardBreakStagger: 0.9
   parryStagger: 1
   parryHitStopMultiplier: 2
-  attackMoveMultiplier: 0.2
+  attackMoveMultiplier: 0.6
+  maxAimPitch: 50
+  inputBuffer: 0.2
   weightClass: 0
   dodges:
   - style: 0
-    distance: 5.5
-    duration: 0.45
-    invulnerableFrom: 0.05
-    invulnerableTo: 0.35
+    distance: 7
+    duration: 0.5
+    invulnerableFrom: 0.03
+    invulnerableTo: 0.4
     recovery: 0.15
     staminaCost: 20
     hopHeight: 0
@@ -390,7 +392,7 @@ MonoBehaviour:
   hitMask:
     serializedVersion: 2
     m_Bits: 4294967295
-  maxHitHeightDifference: 1.5
+  swingOriginHeight: 0.65
 --- !u!114 &3562439389715126252
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -437,6 +439,8 @@ MonoBehaviour:
   flashColor: {r: 1, g: 1, b: 1, a: 1}
   flashDuration: 0.1
   windupTint: {r: 1, g: 0.15, b: 0.1, a: 1}
+  telegraphBody: 0
+  bodyTelegraphStrength: 0.85
   shakeWhenHurt: 0.6
   shakeWhenBlocking: 0.3
   shakeWhenLandingHit: 0.25
@@ -481,25 +485,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: EverRealm::EverRealm.Characters.OceanRescue
   drownDepth: 1.2
---- !u!114 &7677890196822912603
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1871358781000008491}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: bae41b5bc333c3147aa7022f553fa51c, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: EverRealm::EverRealm.Combat.ArmPoser
-  weaponPivot: {fileID: 1705081590612140492}
-  rightUpperArm: {fileID: 4501447636041818328}
-  rightHand: {fileID: 2213497230664526859}
-  leftUpperArm: {fileID: 8935826721758297169}
-  leftHand: {fileID: 997857690684048156}
-  leftArmDirection: {x: -0.15, y: -1, z: 0.05}
-  guardBlendSpeed: 10
 --- !u!114 &5213316464468229056
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -520,6 +505,8 @@ MonoBehaviour:
   attackCooldownMin: 1
   attackCooldownMax: 2.2
   attackFacingAngle: 35
+  swingSpacingFactor: 0.55
+  windupTrackFraction: 0.6
   blockChance: 0.4
   dodgeChance: 0.3
   blockReactionMin: 0.05
@@ -553,6 +540,8 @@ MonoBehaviour:
   workLoiterRadius: 2
   gatherRadius: 4
   arriveDistance: 0.6
+  waypointRadius: 1.5
+  amongHousesMargin: 5
 --- !u!114 &7888090641313655638
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -578,9 +567,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: EverRealm::EverRealm.Characters.CharacterAnimator
   animator: {fileID: 4708972208059402137}
-  attackWindupEnd: 0.29
-  attackSwingEnd: 0.43
-  attackSettled: 0.83
   roll:
     moveEnd: 0.75
     end: 1
@@ -599,9 +585,30 @@ MonoBehaviour:
   deathStart: 0.2
   deathClipSeconds: 3.0333335
   crossFadeSeconds: 0.08
+  attackCrossFadeSeconds: 0.03
+  swingBlendIn: 0.05
+  swingBlendOut: 0.12
   jumpSpeed: 1
   runningJumpSpeed: 1.5
   speedDamping: 0.08
+  spinePitchShare: 0.55
+  pitchFollowSpeed: 300
+--- !u!114 &1336925117886035596
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1871358781000008491}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8045c2b88c73e084aa4409c52a5e50f2, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: EverRealm::EverRealm.Characters.StepSmoother
+  cameraTarget: {fileID: 9222608367155155865}
+  visualCatchUp: 0.07
+  cameraCatchUp: 0.16
+  largestStep: 1.5
 --- !u!1 &3801417525388578411
 GameObject:
   m_ObjectHideFlags: 0
@@ -747,8 +754,8 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 6417346579879599881}
   serializedVersion: 2
-  m_LocalRotation: {x: -0.4612828, y: 0.4565952, z: 0.53992665, w: 0.53592753}
-  m_LocalPosition: {x: -1.6154889e-10, y: 0.0000000013969839, z: -1.7332717e-11}
+  m_LocalRotation: {x: -0.06288227, y: 0.0628821, z: 0.70430523, w: 0.70430523}
+  m_LocalPosition: {x: -0, y: 0.0009900001, z: 0}
   m_LocalScale: {x: 0.9999995, y: 0.9999995, z: 0.9999997}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -868,11 +875,6 @@ PrefabInstance:
       addedObject: {fileID: 4468765228471351393}
     m_AddedComponents: []
   m_SourcePrefab: {fileID: 100100000, guid: be6f8e02382f52c4eb074ca65e92c8e5, type: 3}
---- !u!4 &997857690684048156 stripped
-Transform:
-  m_CorrespondingSourceObject: {fileID: -7067785367309731564, guid: be6f8e02382f52c4eb074ca65e92c8e5, type: 3}
-  m_PrefabInstance: {fileID: 1167334933234055688}
-  m_PrefabAsset: {fileID: 0}
 --- !u!4 &1709553194518748643 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: -8679921383154817045, guid: be6f8e02382f52c4eb074ca65e92c8e5, type: 3}
@@ -883,11 +885,6 @@ Transform:
   m_CorrespondingSourceObject: {fileID: -8177172501646797309, guid: be6f8e02382f52c4eb074ca65e92c8e5, type: 3}
   m_PrefabInstance: {fileID: 1167334933234055688}
   m_PrefabAsset: {fileID: 0}
---- !u!4 &4501447636041818328 stripped
-Transform:
-  m_CorrespondingSourceObject: {fileID: -5887490962730870064, guid: be6f8e02382f52c4eb074ca65e92c8e5, type: 3}
-  m_PrefabInstance: {fileID: 1167334933234055688}
-  m_PrefabAsset: {fileID: 0}
 --- !u!95 &4708972208059402137 stripped
 Animator:
   m_CorrespondingSourceObject: {fileID: 5866666021909216657, guid: be6f8e02382f52c4eb074ca65e92c8e5, type: 3}
@@ -896,10 +893,5 @@ Animator:
 --- !u!137 &7672998439880093921 stripped
 SkinnedMeshRenderer:
   m_CorrespondingSourceObject: {fileID: -411864401206048023, guid: be6f8e02382f52c4eb074ca65e92c8e5, type: 3}
-  m_PrefabInstance: {fileID: 1167334933234055688}
-  m_PrefabAsset: {fileID: 0}
---- !u!4 &8935826721758297169 stripped
-Transform:
-  m_CorrespondingSourceObject: {fileID: 7796113451503928921, guid: be6f8e02382f52c4eb074ca65e92c8e5, type: 3}
   m_PrefabInstance: {fileID: 1167334933234055688}
   m_PrefabAsset: {fileID: 0}

@@ -19,6 +19,7 @@ namespace EverRealm.EditorTools
         const string ClipFolder = HumanFolder + "Animations";
         const string ModelPath = HumanFolder + "HumanMale.fbx";
         const string ControllerPath = ClipFolder + "/Human.controller";
+        const string MaskPath = ClipFolder + "/UpperBody.mask";
         const string PrefabPath = "Assets/EverRealm/Prefabs/Human.prefab";
 
         // Without their own height, jumps sit too low. A negative offset raises them.
@@ -70,6 +71,7 @@ namespace EverRealm.EditorTools
             }
 
             AnimatorController controller = BuildController(clips);
+            BuildUpperBody(controller, SwordMovesetBuilder.Build());
             GiveToPrefab(controller, avatar, clips["Death"]);
             AssetDatabase.SaveAssets();
             Debug.Log($"Rebuilt {clips.Count} human animation clips and {ControllerPath}.");
@@ -110,8 +112,8 @@ namespace EverRealm.EditorTools
         }
 
         /// <summary>
-        /// One layer, driven from code (CharacterAnimator cross-fades between states): locomotion blends on
-        /// Speed; actions are posed by the Phase parameter (Motion Time) so gameplay timing decides the pose.
+        /// The base layer, driven from code (CharacterAnimator cross-fades between states): locomotion blends on
+        /// Speed; whole-body actions are posed by the Phase parameter (Motion Time) so gameplay timing decides the pose.
         /// </summary>
         static AnimatorController BuildController(Dictionary<string, AnimationClip> clips)
         {
@@ -128,6 +130,7 @@ namespace EverRealm.EditorTools
             foreach (AnimatorControllerParameter parameter in controller.parameters) controller.RemoveParameter(parameter);
             controller.AddParameter("Speed", AnimatorControllerParameterType.Float);
             controller.AddParameter("Phase", AnimatorControllerParameterType.Float);
+            controller.AddParameter("SwingPhase", AnimatorControllerParameterType.Float);
 
             // Every gait plays its clip at natural speed: walking is the jog, running the run, sprinting the sprint clip.
             var motor = AssetDatabase.LoadAssetAtPath<GameObject>(PrefabPath).GetComponent<CharacterMotor>();
@@ -156,7 +159,6 @@ namespace EverRealm.EditorTools
                 added.timeParameterActive = true;
                 added.timeParameter = "Phase";
             }
-            Phased("Attack", Clip("Attack"));
             Phased("Roll", Clip("RollForward"));
             Phased("HopForward", Clip("HopForward"));
             Phased("HopBackward", Clip("HopBackward"));
@@ -170,6 +172,48 @@ namespace EverRealm.EditorTools
             Phased("Death", Clip("Death"));
             EditorUtility.SetDirty(controller);
             return controller;
+        }
+
+        /// <summary>
+        /// A second layer masked to the upper body, where swings play over whatever the base layer's legs are doing.
+        /// Posed by the SwingPhase parameter, separate from Phase so a dodge cutting a swing short can't jerk the arms.
+        /// </summary>
+        static void BuildUpperBody(AnimatorController controller, Dictionary<string, AnimationClip> swings)
+        {
+            for (int i = controller.layers.Length - 1; i > 0; i--) controller.RemoveLayer(i);
+
+            AvatarMask mask = AssetDatabase.LoadAssetAtPath<AvatarMask>(MaskPath);
+            if (mask == null)
+            {
+                mask = new AvatarMask();
+                AssetDatabase.CreateAsset(mask, MaskPath);
+            }
+            foreach (AvatarMaskBodyPart part in Enum.GetValues(typeof(AvatarMaskBodyPart)))
+            {
+                if (part == AvatarMaskBodyPart.LastBodyPart) continue;
+                mask.SetHumanoidBodyPartActive(part, part is AvatarMaskBodyPart.Body or AvatarMaskBodyPart.Head or AvatarMaskBodyPart.LeftArm
+                    or AvatarMaskBodyPart.RightArm or AvatarMaskBodyPart.LeftFingers or AvatarMaskBodyPart.RightFingers);
+            }
+            EditorUtility.SetDirty(mask);
+
+            controller.AddLayer("UpperBody");
+            AnimatorControllerLayer[] layers = controller.layers;
+            AnimatorControllerLayer layer = layers[layers.Length - 1];
+            layer.avatarMask = mask;
+            layer.defaultWeight = 0f;
+            layer.blendingMode = AnimatorLayerBlendingMode.Override;
+            controller.layers = layers;
+
+            AnimatorStateMachine machine = layer.stateMachine;
+            machine.defaultState = machine.AddState("Empty");
+            foreach (KeyValuePair<string, AnimationClip> swing in swings)
+            {
+                AnimatorState state = machine.AddState(swing.Key);
+                state.motion = swing.Value;
+                state.timeParameterActive = true;
+                state.timeParameter = "SwingPhase";
+            }
+            EditorUtility.SetDirty(controller);
         }
 
         static void GiveToPrefab(AnimatorController controller, Avatar avatar, AnimationClip death)

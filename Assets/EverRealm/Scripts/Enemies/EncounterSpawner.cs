@@ -30,6 +30,10 @@ namespace EverRealm.Enemies
         [Tooltip("Keeps camps far enough from the hamlet that only raids, not wandering, bring goblins there.")]
         public float minDistanceFromHamlet = 50f;
         public float minCampSpacing = 40f;
+        [Tooltip("Camps placed around each hamlet first, so every hamlet has goblins in raiding reach. They count toward the camp total.")]
+        public int campsPerHamlet = 4;
+        [Tooltip("Those camps lie no further than this from the hamlet's square.")]
+        public float hamletCampRange = 180f;
         [Tooltip("A camp regrows one goblin this often (in-game hours) while it has fewer than its capacity.")]
         public float regrowHours = 12f;
         public int campCapacity = 4;
@@ -82,28 +86,51 @@ namespace EverRealm.Enemies
 
             var rng = new System.Random(world.Settings.seed * 31 + 7);
             float size = world.World.SizeInMeters;
-            Vector3 spawn = world.FindSpawnPoint();
 
-            for (int attempt = 0; attempt < 300 && camps.Count < campCount; attempt++)
+            // Every hamlet gets camps within raiding reach first; the rest fall anywhere.
+            foreach (Settlement settlement in world.Settlements)
             {
-                float x = (float)rng.NextDouble() * size, z = (float)rng.NextDouble() * size;
-                if (!world.TryGetLandSurface(x, z, out Vector3 camp)) continue;
-                if (FlatDistance(camp, spawn) < minDistanceFromSpawn) continue;
-                if (world.Settlement != null && FlatDistance(camp, world.Settlement.Square) < minDistanceFromHamlet) continue;
-                if (camps.Exists(c => FlatDistance(c, camp) < minCampSpacing)) continue;
-                camps.Add(camp);
-                nextRegrowAt.Add(clock.TotalHours + regrowHours);
-
-                int count = rng.Next(minPerCamp, maxPerCamp + 1);
-                for (int i = 0; i < count; i++)
+                int placed = 0;
+                for (int attempt = 0; attempt < 100 && placed < campsPerHamlet; attempt++)
                 {
-                    double angle = rng.NextDouble() * Mathf.PI * 2, radius = rng.NextDouble() * campRadius;
-                    float gx = camp.x + (float)(System.Math.Cos(angle) * radius);
-                    float gz = camp.z + (float)(System.Math.Sin(angle) * radius);
-                    if (world.TryGetLandSurface(gx, gz, out Vector3 position))
-                        Spawn(position, camp, (float)(rng.NextDouble() * 360), (WeightClass)rng.Next(3));
+                    double angle = rng.NextDouble() * Mathf.PI * 2;
+                    double range = minDistanceFromHamlet + rng.NextDouble() * (hamletCampRange - minDistanceFromHamlet);
+                    float x = settlement.Square.x + (float)(System.Math.Cos(angle) * range);
+                    float z = settlement.Square.z + (float)(System.Math.Sin(angle) * range);
+                    if (TryPlaceCamp(x, z, rng, settlement.Square)) placed++;
                 }
             }
+            for (int attempt = 0; attempt < 300 && camps.Count < campCount; attempt++)
+                TryPlaceCamp((float)rng.NextDouble() * size, (float)rng.NextDouble() * size, rng);
+        }
+
+        bool TryPlaceCamp(float x, float z, System.Random rng, Vector3? marchesOn = null)
+        {
+            if (!world.TryGetLandSurface(x, z, out Vector3 camp)) return false;
+            if (FlatDistance(camp, world.FindSpawnPoint()) < minDistanceFromSpawn) return false;
+            if (IsNearHamlet(camp)) return false;
+            if (camps.Exists(c => FlatDistance(c, camp) < minCampSpacing)) return false;
+            if (marchesOn.HasValue && !world.CanMarch(camp, marchesOn.Value)) return false;
+            camps.Add(camp);
+            nextRegrowAt.Add(clock.TotalHours + regrowHours);
+
+            int count = rng.Next(minPerCamp, maxPerCamp + 1);
+            for (int i = 0; i < count; i++)
+            {
+                double angle = rng.NextDouble() * Mathf.PI * 2, radius = rng.NextDouble() * campRadius;
+                float gx = camp.x + (float)(System.Math.Cos(angle) * radius);
+                float gz = camp.z + (float)(System.Math.Sin(angle) * radius);
+                if (world.TryGetLandSurface(gx, gz, out Vector3 position))
+                    Spawn(position, camp, (float)(rng.NextDouble() * 360), (WeightClass)rng.Next(3));
+            }
+            return true;
+        }
+
+        bool IsNearHamlet(Vector3 point)
+        {
+            foreach (Settlement settlement in world.Settlements)
+                if (FlatDistance(point, settlement.Square) < minDistanceFromHamlet) return true;
+            return false;
         }
 
         void Update()

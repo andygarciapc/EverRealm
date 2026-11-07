@@ -72,6 +72,9 @@ namespace EverRealm.Characters
         /// <summary>Velocity the controller actually achieved last move, after collisions.</summary>
         public Vector3 ActualVelocity => controller.velocity;
         public float Radius => controller.radius;
+        public float Height => controller.height;
+        /// <summary>How far the controller popped up onto a step this frame, beyond any jump or fall.</summary>
+        public float StepRise { get; private set; }
 
         void Awake()
         {
@@ -106,6 +109,7 @@ namespace EverRealm.Characters
 
         void Update()
         {
+            StepRise = 0f;
             float dt = localTime.DeltaTime;
             if (dt <= 0f) return; // Frozen by hit-stop.
             clock += dt;
@@ -117,7 +121,9 @@ namespace EverRealm.Characters
             UpdateVertical(dt);
             impulseVelocity = Vector3.MoveTowards(impulseVelocity, Vector3.zero, impulseDrag * dt);
 
+            float heightBefore = transform.position.y;
             controller.Move((horizontalVelocity + impulseVelocity + Vector3.up * verticalVelocity) * dt);
+            StepRise = Mathf.Max(0f, transform.position.y - heightBefore - Mathf.Max(0f, verticalVelocity * dt));
         }
 
         Vector3 DesiredVelocity(float dt)

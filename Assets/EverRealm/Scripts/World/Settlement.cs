@@ -31,6 +31,7 @@ namespace EverRealm.World
     /// <summary>A settled place: its houses, where its people work and where they gather.</summary>
     public sealed class Settlement
     {
+        public string Name { get; }
         /// <summary>Open ground at the centre, clear of houses; every house and work spot is reachable from it.</summary>
         public Vector3 Square { get; }
         /// <summary>Radius of the flattened ground, in metres.</summary>
@@ -38,8 +39,9 @@ namespace EverRealm.World
         public IReadOnlyList<House> Houses { get; }
         public IReadOnlyList<Vector3> WorkSpots { get; }
 
-        public Settlement(Vector3 square, float radius, IReadOnlyList<House> houses, IReadOnlyList<Vector3> workSpots)
+        public Settlement(string name, Vector3 square, float radius, IReadOnlyList<House> houses, IReadOnlyList<Vector3> workSpots)
         {
+            Name = name;
             Square = square;
             Radius = radius;
             Houses = houses;

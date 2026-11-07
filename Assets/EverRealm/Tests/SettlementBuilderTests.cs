@@ -20,7 +20,7 @@ namespace EverRealm.Tests
         {
             WorldSettings settings = CreateSettings(seed, blockSize);
             WorldData world = new TerrainGenerator(settings).Generate();
-            return (world, SettlementBuilder.Build(world, settings));
+            return (world, SettlementBuilder.Build(world, settings)[0]);
         }
 
         static BlockType BlockAt(WorldData world, Vector3 position, float heightAboveFloor) =>

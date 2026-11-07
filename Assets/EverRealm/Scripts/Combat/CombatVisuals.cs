@@ -6,7 +6,7 @@ namespace EverRealm.Combat
     /// Placeholder procedural animation driven by <see cref="Combatant"/> state: the weapon pivot moves
     /// through rest, wind-up, swing and guard poses, and the visual root rolls, hops, lunges, staggers
     /// and falls. Rigged bodies with a <see cref="Characters.CharacterAnimator"/> take dodges and death from
-    /// their clips and only keep the stagger lean (and the guard pose, through <see cref="ArmPoser"/>).
+    /// their clips and only keep the stagger lean.
     /// Runs on the character's local time so hit-stop freezes it too.
     /// </summary>
     [RequireComponent(typeof(Combatant))]
@@ -34,6 +34,7 @@ namespace EverRealm.Combat
         public float deathFallTime = 0.4f;
 
         Combatant combatant;
+        Characters.StepSmoother stepSmoother;
         Vector3 pivotHome;
         Vector3 bodyHome;
         bool animated;
@@ -41,6 +42,7 @@ namespace EverRealm.Combat
         void Awake()
         {
             combatant = GetComponent<Combatant>();
+            stepSmoother = GetComponent<Characters.StepSmoother>();
             pivotHome = weaponPivot.localPosition;
             // Stand the model's feet (at its origin) on the ground: the capsule's bottom, less the skin width the
             // CharacterController hovers by.
@@ -146,6 +148,7 @@ namespace EverRealm.Combat
                 offset += center - rotation * center;
             }
             visualRoot.localRotation = rotation;
+            if (stepSmoother != null) offset += Vector3.down * stepSmoother.VisualLag;
             visualRoot.localPosition = bodyHome + offset;
         }
     }

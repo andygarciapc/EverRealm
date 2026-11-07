@@ -1,0 +1,286 @@
+# The sword's attacks, read by SwordMovesetBuilder (EverRealm/Rebuild Human Animations).
+# move <Animator state> <seconds> <time in standing_melee for the base pose>
+# key <normalized time>, then "Muscle Name = value" for what moves. A muscle not named holds its last value.
+# Muscle values run -1 to 1. Hit window: 0.5 to 0.667.
+# On this rig: Arm Front-Back negative swings the arm across the front of the body, positive out and back.
+
+move SwordSlashRight 0.6 0.7
+key 0
+Spine Left-Right = 0
+Chest Left-Right = 0
+Spine Front-Back = 0.05
+Chest Front-Back = 0.05
+Neck Tilt Left-Right = 0
+Head Tilt Left-Right = 0
+Neck Nod Down-Up = 0
+Head Nod Down-Up = 0
+Neck Turn Left-Right = 0
+Head Turn Left-Right = 0
+Spine Twist Left-Right = 0
+Chest Twist Left-Right = 0
+Left Arm Down-Up = -0.7
+Left Arm Front-Back = 0.15
+Left Arm Twist In-Out = 0
+Left Forearm Stretch = 0.65
+Left Forearm Twist In-Out = 0.3
+Left Hand Down-Up = 0.1
+Left Hand In-Out = 0
+Right Arm Down-Up = -0.4
+Right Arm Front-Back = 0.1
+Right Arm Twist In-Out = 0.2
+Right Forearm Stretch = 0.4
+Right Forearm Twist In-Out = 0.15
+Right Hand Down-Up = 0
+Right Hand In-Out = 0.5
+key 0.38
+Spine Twist Left-Right = 0.2
+Chest Twist Left-Right = 0.4
+Neck Turn Left-Right = -0.15
+Head Turn Left-Right = -0.15
+Left Arm Front-Back = -0.1
+Right Arm Down-Up = 0.45
+Right Arm Front-Back = 0.55
+Right Arm Twist In-Out = 0.84
+Right Forearm Stretch = 0.8
+Right Forearm Twist In-Out = 1.22
+Right Hand Down-Up = 0.31
+Right Hand In-Out = -0.46
+key 0.5
+Spine Twist Left-Right = 0.15
+Chest Twist Left-Right = 0.25
+Right Arm Down-Up = 0.35
+Right Arm Front-Back = 0.45
+Right Arm Twist In-Out = 0.8
+Right Forearm Twist In-Out = 1.3
+Right Hand In-Out = 0.1
+key 0.58
+Spine Twist Left-Right = -0.1
+Chest Twist Left-Right = -0.2
+Neck Turn Left-Right = 0.05
+Head Turn Left-Right = 0.05
+Right Arm Down-Up = 0.25
+Right Arm Front-Back = 0
+Right Arm Twist In-Out = 0.2
+Right Forearm Stretch = 0.9
+Right Forearm Twist In-Out = 1.1
+Right Hand In-Out = 0.3
+Right Hand Down-Up = 0.2
+key 0.667
+Spine Twist Left-Right = -0.3
+Chest Twist Left-Right = -0.6
+Neck Turn Left-Right = 0.2
+Head Turn Left-Right = 0.2
+Left Arm Front-Back = 0.35
+Right Arm Down-Up = 0.1
+Right Arm Front-Back = -0.5
+Right Arm Twist In-Out = -0.5
+Right Forearm Stretch = 0.75
+Right Forearm Twist In-Out = 1
+Right Hand Down-Up = 0.2
+Right Hand In-Out = 1.25
+key 0.8
+Spine Twist Left-Right = -0.33
+Chest Twist Left-Right = -0.65
+Right Arm Front-Back = -0.55
+key 1
+Spine Twist Left-Right = 0
+Chest Twist Left-Right = 0
+Neck Turn Left-Right = 0
+Head Turn Left-Right = 0
+Left Arm Front-Back = 0.15
+Right Arm Down-Up = -0.4
+Right Arm Front-Back = 0.1
+Right Arm Twist In-Out = 0.2
+Right Forearm Stretch = 0.4
+Right Forearm Twist In-Out = 0.15
+Right Hand Down-Up = 0
+Right Hand In-Out = 0.5
+
+move SwordSlashLeft 0.6 0.7
+key 0
+Spine Left-Right = 0
+Chest Left-Right = 0
+Spine Front-Back = 0.05
+Chest Front-Back = 0.05
+Neck Tilt Left-Right = 0
+Head Tilt Left-Right = 0
+Neck Nod Down-Up = 0
+Head Nod Down-Up = 0
+Neck Turn Left-Right = 0
+Head Turn Left-Right = 0
+Spine Twist Left-Right = 0
+Chest Twist Left-Right = 0
+Left Arm Down-Up = -0.7
+Left Arm Front-Back = 0.15
+Left Arm Twist In-Out = 0
+Left Forearm Stretch = 0.65
+Left Forearm Twist In-Out = 0.3
+Left Hand Down-Up = 0.1
+Left Hand In-Out = 0
+Right Arm Down-Up = -0.4
+Right Arm Front-Back = 0.1
+Right Arm Twist In-Out = 0.2
+Right Forearm Stretch = 0.4
+Right Forearm Twist In-Out = 0.15
+Right Hand Down-Up = 0
+Right Hand In-Out = 0.5
+key 0.38
+Spine Twist Left-Right = -0.3
+Chest Twist Left-Right = -0.6
+Neck Turn Left-Right = 0.2
+Head Turn Left-Right = 0.2
+Right Arm Down-Up = 0.1
+Right Arm Front-Back = -0.6
+Right Arm Twist In-Out = -0.55
+Right Forearm Stretch = 0.55
+Right Forearm Twist In-Out = 1
+Right Hand In-Out = 1.2
+Right Hand Down-Up = 0.2
+key 0.5
+Spine Twist Left-Right = -0.2
+Chest Twist Left-Right = -0.4
+Right Arm Front-Back = -0.45
+Right Arm Twist In-Out = -0.4
+key 0.58
+Spine Twist Left-Right = 0.05
+Chest Twist Left-Right = 0.1
+Neck Turn Left-Right = 0
+Head Turn Left-Right = 0
+Right Arm Down-Up = 0.2
+Right Arm Front-Back = 0
+Right Arm Twist In-Out = 0.2
+Right Forearm Stretch = 0.9
+Right Forearm Twist In-Out = 1.1
+Right Hand In-Out = 0.75
+key 0.667
+Spine Twist Left-Right = 0.25
+Chest Twist Left-Right = 0.5
+Neck Turn Left-Right = -0.15
+Head Turn Left-Right = -0.15
+Right Arm Down-Up = 0.3
+Right Arm Front-Back = 0.32
+Right Arm Twist In-Out = 0.5
+Right Forearm Stretch = 0.95
+Right Forearm Twist In-Out = 0.7
+Right Hand In-Out = 0.6
+key 0.8
+Chest Twist Left-Right = 0.55
+Right Arm Front-Back = 0.38
+key 1
+Spine Twist Left-Right = 0
+Chest Twist Left-Right = 0
+Neck Turn Left-Right = 0
+Head Turn Left-Right = 0
+Right Arm Down-Up = -0.4
+Right Arm Front-Back = 0.1
+Right Arm Twist In-Out = 0.2
+Right Forearm Stretch = 0.4
+Right Forearm Twist In-Out = 0.15
+Right Hand Down-Up = 0
+Right Hand In-Out = 0.5
+
+move SwordStab 0.6 0.7
+key 0
+Spine Left-Right = 0
+Chest Left-Right = 0
+Spine Front-Back = 0.05
+Chest Front-Back = 0.05
+Neck Tilt Left-Right = 0
+Head Tilt Left-Right = 0
+Neck Nod Down-Up = 0
+Head Nod Down-Up = 0
+Neck Turn Left-Right = 0
+Head Turn Left-Right = 0
+Spine Twist Left-Right = 0
+Chest Twist Left-Right = 0
+Left Arm Down-Up = -0.7
+Left Arm Front-Back = 0.15
+Left Arm Twist In-Out = 0
+Left Forearm Stretch = 0.65
+Left Forearm Twist In-Out = 0.3
+Left Hand Down-Up = 0.1
+Left Hand In-Out = 0
+Right Arm Down-Up = -0.4
+Right Arm Front-Back = 0.1
+Right Arm Twist In-Out = 0.2
+Right Forearm Stretch = 0.4
+Right Forearm Twist In-Out = 0.15
+Right Hand Down-Up = 0
+Right Hand In-Out = 0.5
+key 0.42
+Spine Twist Left-Right = 0.25
+Chest Twist Left-Right = 0.5
+Neck Turn Left-Right = -0.2
+Head Turn Left-Right = -0.2
+Chest Front-Back = -0.05
+Left Arm Front-Back = -0.25
+Right Arm Down-Up = -0.2
+Right Arm Front-Back = 0.5
+Right Arm Twist In-Out = 0.1
+Right Forearm Stretch = -0.2
+Right Forearm Twist In-Out = 0.2
+Right Hand In-Out = 1
+key 0.5
+Right Arm Front-Back = 0.45
+key 0.6
+Spine Twist Left-Right = -0.3
+Chest Twist Left-Right = -0.55
+Neck Turn Left-Right = 0.2
+Head Turn Left-Right = 0.2
+Chest Front-Back = 0.2
+Left Arm Front-Back = 0.5
+Right Arm Down-Up = 0.2
+Right Arm Front-Back = -0.25
+Right Arm Twist In-Out = 0
+Right Forearm Stretch = 1
+Right Forearm Twist In-Out = 0.2
+Right Hand In-Out = 1.3
+key 0.667
+key 0.8
+Spine Twist Left-Right = -0.25
+Chest Twist Left-Right = -0.45
+key 1
+Spine Twist Left-Right = 0
+Chest Twist Left-Right = 0
+Neck Turn Left-Right = 0
+Head Turn Left-Right = 0
+Chest Front-Back = 0.05
+Left Arm Front-Back = 0.15
+Right Arm Down-Up = -0.4
+Right Arm Front-Back = 0.1
+Right Arm Twist In-Out = 0.2
+Right Forearm Stretch = 0.4
+Right Forearm Twist In-Out = 0.15
+Right Hand Down-Up = 0
+Right Hand In-Out = 0.5
+
+# Held while blocking. One pose: blade up across the front, hand at the shoulder, off hand bracing.
+move SwordGuard 0.6 0.7
+key 0
+Spine Left-Right = 0
+Chest Left-Right = 0
+Spine Front-Back = 0.1
+Chest Front-Back = 0.1
+Neck Tilt Left-Right = 0
+Head Tilt Left-Right = 0
+Neck Nod Down-Up = -0.1
+Head Nod Down-Up = -0.05
+Neck Turn Left-Right = 0.1
+Head Turn Left-Right = 0.1
+Spine Twist Left-Right = -0.1
+Chest Twist Left-Right = -0.2
+Left Arm Down-Up = -0.45
+Left Arm Front-Back = -0.2
+Left Arm Twist In-Out = 0
+Left Forearm Stretch = 0.2
+Left Forearm Twist In-Out = 0.3
+Left Hand Down-Up = 0.1
+Left Hand In-Out = 0
+Right Arm Down-Up = -0.2
+Right Arm Front-Back = -0.3
+Right Arm Twist In-Out = 0.1
+Right Forearm Stretch = -0.1
+Right Forearm Twist In-Out = 0.6
+Right Hand Down-Up = 0
+Right Hand In-Out = 0
+key 1

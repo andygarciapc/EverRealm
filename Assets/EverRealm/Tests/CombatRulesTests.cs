@@ -27,20 +27,60 @@ namespace EverRealm.Tests
             Assert.IsFalse(CombatRules.InArc(Vector3.forward, Vector3.right, 100f)); // 90° is outside a 100° arc.
         }
 
+        static readonly Vector3 Shoulder = new Vector3(0f, 1.3f, 0f);
+
+        static bool Lands(float aimPitch, Vector3 feet, float height = 2f, float radius = 0.35f, float heightArc = 60f, Vector3? forward = null) =>
+            CombatRules.SwingReaches(Shoulder, forward ?? Vector3.forward, aimPitch, feet, height, radius, 2.2f, 100f, heightArc);
+
         [Test]
         public void SwingReaches_RespectsReachAndTargetRadius()
         {
             Vector3 target = new Vector3(0f, 0f, 2.4f);
-            Assert.IsTrue(CombatRules.SwingReaches(Vector3.zero, Vector3.forward, target, 0.35f, 2.2f, 100f, 1.5f));
-            Assert.IsFalse(CombatRules.SwingReaches(Vector3.zero, Vector3.forward, target, 0f, 2.2f, 100f, 1.5f));
-            Assert.IsFalse(CombatRules.SwingReaches(Vector3.zero, Vector3.back, target, 0.35f, 2.2f, 100f, 1.5f));
+            Assert.IsTrue(Lands(0f, target));
+            Assert.IsFalse(Lands(0f, target, radius: 0f));
+            Assert.IsFalse(Lands(0f, target, forward: Vector3.back));
         }
 
         [Test]
-        public void SwingReaches_FailsAcrossLargeHeightDifference()
+        public void SwingReaches_LevelSwingHitsShortTargets()
         {
-            Vector3 below = new Vector3(0f, -2.2f, 1.5f);
-            Assert.IsFalse(CombatRules.SwingReaches(Vector3.zero, Vector3.forward, below, 0.35f, 2.2f, 100f, 1.5f));
+            Assert.IsTrue(Lands(0f, new Vector3(0f, 0f, 1.5f), height: 1.49f));
+        }
+
+        [Test]
+        public void SwingReaches_MissesWhenAimedAwayFromTheBody()
+        {
+            Assert.IsFalse(Lands(50f, new Vector3(0f, 0f, 1.5f), height: 1.49f));
+        }
+
+        [Test]
+        public void SwingReaches_NarrowAttacksNeedExacterAim()
+        {
+            Vector3 target = new Vector3(0f, 0f, 1.5f);
+            Assert.IsTrue(Lands(25f, target, height: 1.49f, heightArc: 60f));
+            Assert.IsFalse(Lands(25f, target, height: 1.49f, heightArc: 30f));
+        }
+
+        [Test]
+        public void SwingReaches_TargetsAboveAndBelowNeedAiming()
+        {
+            Vector3 above = new Vector3(0f, 3f, 1.5f), below = new Vector3(0f, -2.2f, 1.5f);
+            Assert.IsFalse(Lands(0f, above));
+            Assert.IsTrue(Lands(50f, above));
+            Assert.IsFalse(Lands(0f, below, height: 1.5f));
+            Assert.IsTrue(Lands(-50f, below, height: 1.5f));
+        }
+
+        [Test]
+        public void SwingReaches_AimingCantBeatReach()
+        {
+            Assert.IsFalse(Lands(50f, new Vector3(0f, 5f, 1.5f)));
+        }
+
+        [Test]
+        public void SwingReaches_HitsAnythingStandingOnTheBody()
+        {
+            Assert.IsTrue(Lands(0f, new Vector3(0f, 1.8f, 0f)));
         }
 
         [Test]

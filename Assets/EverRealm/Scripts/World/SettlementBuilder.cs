@@ -4,29 +4,67 @@ using UnityEngine;
 namespace EverRealm.World
 {
     /// <summary>
-    /// Finds a fairly flat grass site near the island centre, flattens it and stamps a ring of huts around
-    /// an open square, doors facing in. Deterministic from the seed. Huts are measured in whole blocks, the
-    /// world's building unit; the site and the layout of the huts on it are in metres.
+    /// Finds fairly flat grass sites a good walk apart, flattens each and stamps a ring of huts around an
+    /// open square, doors facing in, and names it. Deterministic from the seed. Huts are measured in whole
+    /// blocks, the world's building unit; the sites and the layout of the huts on them are in metres.
     /// </summary>
     public static class SettlementBuilder
     {
-        const float SearchRadius = 60f, SearchStep = 4f;
+        const float SearchStep = 16f;
+        // Of equally flat sites, those nearer the centre are preferred, staying clear of the coast.
+        const float CentrePreference = 0.01f;
+        const int FirstSiteTries = 64;
+
+        // Provisional names, chosen by seed. The creative director may want to set the tone.
+        static readonly string[] Names =
+        {
+            "Hollowmere", "Ashford", "Thornwick", "Bracken Hollow", "Elderbrook", "Stonewell",
+            "Greywater", "Oakenfield", "Marrowdale", "Fernhaven", "Wrenbury", "Dunmarrow",
+        };
+
         // A 2 x 4 block doorway (1.4m x 2.8m at 0.7m blocks) fits the tallest planned humans (2.1m) without
         // catching the lintel. Walls stand a block above the doorway.
         const int DoorWidth = 2, DoorHeight = 4, WallHeight = DoorHeight + 1;
         // How far the door, inside and bed points sit from the walls.
         const float DoorStandOff = 0.9f, WallStandOff = 0.6f;
 
-        /// <summary>Builds the hamlet into <paramref name="world"/>, or returns null if no site is flat enough.</summary>
-        public static Settlement Build(WorldData world, WorldSettings settings)
+        readonly struct Site
+        {
+            public readonly Vector2 Centre;
+            public readonly int PadTop;
+            public readonly float Score;
+
+            public Site(Vector2 centre, int padTop, float score)
+            {
+                Centre = centre;
+                PadTop = padTop;
+                Score = score;
+            }
+        }
+
+        /// <summary>Builds the island's hamlets into <paramref name="world"/>: as many as the land has room for, up to the wanted number.</summary>
+        public static List<Settlement> Build(WorldData world, WorldSettings settings)
         {
             int[] tops = TopBlocks(world);
-            if (!TryFindSite(world, settings, tops, out Vector2 centre, out int padTop)) return null;
-            Flatten(world, settings, tops, centre, padTop);
+            var rng = new System.Random(settings.seed * 17 + 3);
+            var names = new List<string>(Names);
+            var settlements = new List<Settlement>();
+            foreach (Site site in ChooseSites(FindSites(world, settings, tops), settings))
+            {
+                int name = rng.Next(names.Count);
+                Flatten(world, settings, tops, site.Centre, site.PadTop);
+                settlements.Add(BuildHamlet(world, settings, rng, names[name], site));
+                names.RemoveAt(name);
+            }
+            return settlements;
+        }
 
+        static Settlement BuildHamlet(WorldData world, WorldSettings settings, System.Random rng, string name, Site site)
+        {
+            Vector2 centre = site.Centre;
+            int padTop = site.PadTop;
             float blockSize = world.BlockSize;
             float floorHeight = (padTop + 1) * blockSize;
-            var rng = new System.Random(settings.seed * 17 + 3);
             int hutCount = rng.Next(settings.minHuts, settings.maxHuts + 1);
             int hutBlocks = Mathf.Max(DoorWidth + 2, settings.hutBlocks);
             float hutMeters = hutBlocks * blockSize;
@@ -59,11 +97,11 @@ namespace EverRealm.World
                 workSpots.Add(new Vector3(spot.x, floorHeight, spot.y));
             }
 
-            return new Settlement(new Vector3(centre.x, floorHeight, centre.y), settings.hamletRadius, houses, workSpots);
+            return new Settlement(name, new Vector3(centre.x, floorHeight, centre.y), settings.hamletRadius, houses, workSpots);
         }
 
         /// <summary>Index of the highest solid block in each column (x + z * size), or -1 for an empty column.</summary>
-        static int[] TopBlocks(WorldData world)
+        public static int[] TopBlocks(WorldData world)
         {
             int size = world.SizeInBlocks;
             var tops = new int[size * size];
@@ -77,28 +115,59 @@ namespace EverRealm.World
             return tops;
         }
 
-        /// <summary>Flattest all-grass site near the centre; ties go to the one closer to the centre.</summary>
-        static bool TryFindSite(WorldData world, WorldSettings settings, int[] tops, out Vector2 best, out int bestPadTop)
+        /// <summary>Every all-grass site on the island that's flat enough, best first: flattest, then nearest the centre.</summary>
+        static List<Site> FindSites(WorldData world, WorldSettings settings, int[] tops)
         {
-            best = default;
-            bestPadTop = 0;
-            float half = world.SizeInMeters * 0.5f, bestScore = float.PositiveInfinity;
-            for (float oz = -SearchRadius; oz <= SearchRadius; oz += SearchStep)
-            for (float ox = -SearchRadius; ox <= SearchRadius; ox += SearchStep)
+            var sites = new List<Site>();
+            float size = world.SizeInMeters, half = size * 0.5f;
+            for (float z = SearchStep; z < size; z += SearchStep)
+            for (float x = SearchStep; x < size; x += SearchStep)
             {
-                float distance = Mathf.Sqrt(ox * ox + oz * oz);
-                if (distance > SearchRadius) continue;
-                var candidate = new Vector2(half + ox, half + oz);
+                var candidate = new Vector2(x, z);
                 if (!TrySite(world, settings, tops, candidate, out float relief, out int padTop)) continue;
-                float score = relief + distance * 0.03f;
-                if (score < bestScore)
+                sites.Add(new Site(candidate, padTop, relief + Vector2.Distance(candidate, new Vector2(half, half)) * CentrePreference));
+            }
+            sites.Sort((a, b) => a.Score.CompareTo(b.Score));
+            return sites;
+        }
+
+        /// <summary>
+        /// The best set of sites at the wanted spacing. If the land can't give the wanted number, the spacing
+        /// relaxes before the number does: first the upper limit, then the lower.
+        /// </summary>
+        static List<Site> ChooseSites(List<Site> sites, WorldSettings settings)
+        {
+            var best = new List<Site>();
+            foreach ((float min, float max) in new[]
+                     {
+                         (settings.minHamletSpacing, settings.maxHamletSpacing),
+                         (settings.minHamletSpacing, float.PositiveInfinity),
+                         (settings.minHamletSpacing * 0.5f, float.PositiveInfinity),
+                     })
+            {
+                for (int first = 0; first < sites.Count && first < FirstSiteTries; first++)
                 {
-                    bestScore = score;
-                    best = candidate;
-                    bestPadTop = padTop;
+                    List<Site> chosen = SpacedFrom(sites, first, settings.hamletCount, min, max);
+                    if (chosen.Count > best.Count) best = chosen;
+                    if (best.Count == settings.hamletCount) return best;
                 }
             }
-            return bestScore < float.PositiveInfinity;
+            return best;
+        }
+
+        static List<Site> SpacedFrom(List<Site> sites, int first, int wanted, float min, float max)
+        {
+            var chosen = new List<Site> { sites[first] };
+            foreach (Site site in sites)
+            {
+                if (chosen.Count == wanted) break;
+                if (chosen.TrueForAll(c =>
+                    {
+                        float distance = Vector2.Distance(c.Centre, site.Centre);
+                        return distance >= min && distance <= max;
+                    })) chosen.Add(site);
+            }
+            return chosen;
         }
 
         static bool TrySite(WorldData world, WorldSettings settings, int[] tops, Vector2 centre, out float relief, out int padTop)
@@ -107,7 +176,6 @@ namespace EverRealm.World
             padTop = 0;
             float blockSize = world.BlockSize, radius = settings.hamletRadius, step = Mathf.Max(1f, blockSize);
             float minLand = settings.seaLevel + settings.beachHeight + 0.5f;
-            float rockHeight = settings.seaLevel + settings.rockLine * (settings.maxHeight - settings.seaLevel);
             int size = world.SizeInBlocks, lowest = int.MaxValue, highest = int.MinValue;
             long sum = 0;
             int count = 0;
@@ -120,7 +188,7 @@ namespace EverRealm.World
                 if (bx < 0 || bz < 0 || bx >= size || bz >= size) return false;
                 int top = tops[bx + bz * size];
                 float topMeters = (top + 1) * blockSize;
-                if (top < 0 || topMeters <= minLand || topMeters >= rockHeight) return false;
+                if (top < 0 || topMeters <= minLand || topMeters >= settings.hamletMaxHeight) return false;
                 lowest = Mathf.Min(lowest, top);
                 highest = Mathf.Max(highest, top);
                 sum += top;
@@ -137,7 +205,6 @@ namespace EverRealm.World
         static void Flatten(WorldData world, WorldSettings settings, int[] tops, Vector2 centre, int padTop)
         {
             float blockSize = world.BlockSize, radius = settings.hamletRadius, outer = radius + settings.hamletBlend;
-            int dirtBlocks = Mathf.Max(1, Mathf.RoundToInt(settings.dirtDepth / blockSize));
             int size = world.SizeInBlocks;
             int minX = Mathf.Max(0, Mathf.FloorToInt((centre.x - outer) / blockSize));
             int maxX = Mathf.Min(size - 1, Mathf.CeilToInt((centre.x + outer) / blockSize));
@@ -158,17 +225,23 @@ namespace EverRealm.World
                 if (target == old) continue;
 
                 // Reshape the column but keep its surface material (grass on the site, maybe sand at the edge).
-                BlockType surface = world.GetBlock(bx, old, bz);
-                BlockType subsurface = surface == BlockType.Grass ? BlockType.Dirt : surface;
-                for (int y = Mathf.Max(0, Mathf.Min(old, target) - dirtBlocks); y <= Mathf.Max(old, target); y++)
-                {
-                    BlockType block = y > target ? BlockType.Air
-                                    : y == target ? surface
-                                    : y >= target - dirtBlocks ? subsurface
-                                    : BlockType.Stone;
-                    world.SetBlock(bx, y, bz, block);
-                }
+                ReshapeColumn(world, settings, bx, bz, old, target, world.GetBlock(bx, old, bz));
                 tops[index] = target;
+            }
+        }
+
+        /// <summary>Cuts or fills a column from height <paramref name="old"/> to <paramref name="target"/>, topped with <paramref name="surface"/>.</summary>
+        public static void ReshapeColumn(WorldData world, WorldSettings settings, int bx, int bz, int old, int target, BlockType surface)
+        {
+            int dirtBlocks = Mathf.Max(1, Mathf.RoundToInt(settings.dirtDepth / world.BlockSize));
+            BlockType subsurface = surface == BlockType.Sand || surface == BlockType.Stone ? surface : BlockType.Dirt;
+            for (int y = Mathf.Max(0, Mathf.Min(old, target) - dirtBlocks); y <= Mathf.Max(old, target); y++)
+            {
+                BlockType block = y > target ? BlockType.Air
+                                : y == target ? surface
+                                : y >= target - dirtBlocks ? subsurface
+                                : BlockType.Stone;
+                world.SetBlock(bx, y, bz, block);
             }
         }
 
